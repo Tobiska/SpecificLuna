@@ -1,0 +1,1753 @@
+#!/usr/bin/env python3
+
+# COMPILATION OPTIONS
+
+# If output DF has no pushes nor req_count, req_unlimited is assigned
+ONLY_REQUESTS_FLAG=True
+INSERT_REQ_UNLIMITED=True
+AUTO_REQUESTS=True
+
+# END OF COMPILATION OPTIONS
+
+import sys, json
+
+class NameNotRecognized(Exception):
+	def __init__(self, *args, **kwargs):
+		Exception.__init__(self, *args, **kwargs)
+
+def R(*args):
+	res=[]
+	for arg in args:
+		res.append(json.dumps(arg, indent=4))
+	raise Exception(' // '.join(res))
+
+def prefix(prefix, text):
+	return '\n'.join('%s%s' % (prefix, ln) if ln else ln \
+		for ln in text.split('\n'))
+
+class Expr:
+	def __init__(self, j):
+		self.j=j
+	def __repr__(self):
+		raise NotImplementedError('not overriden', self.__class__)
+	def get_jexpr(self):
+		return self.j
+
+class ExprIConst(Expr):
+	def __init__(self, j):
+		Expr.__init__(self, j)
+		self.j=j
+		self.Value=self.j['value']
+	
+	def gen(self, regs):
+		return 'ICONST %d\n' % self.Value
+
+	def __repr__(self):
+		return '%d' % self.Value
+
+	def is_const(self):
+		return True
+		
+class ExprRConst(Expr):
+	def __init__(self, j):
+		Expr.__init__(self, j)
+		self.Value=self.j['value']
+	
+	def gen(self, regs):
+		return 'RCONST %lf\n' % self.Value
+
+	def __repr__(self):
+		return '%lf' % self.Value
+
+	def is_const(self):
+		return True
+		
+class ExprSConst(Expr):
+	def __init__(self, j):
+		Expr.__init__(self, j)
+		self.Value=self.j['value']
+	
+	def gen(self, regs):
+		return 'SCONST "%s"\n' % self.Value
+
+	def __repr__(self):
+		return '"%s"' % self.Value
+
+	def is_const(self):
+		return True
+		
+class ExprReg(Expr):
+	def __init__(self, reg_num):
+		Expr.__init__(self, None)
+		self.Reg=reg_num
+	
+	def gen(self, regs):
+		return 'REG %d\n' % self.Reg
+	
+	def __repr__(self):
+		return 'R%d' % self.Reg
+
+class ExprCast(Expr):
+	def __init__(self, j, regs):
+		Expr.__init__(self, j)
+		self.Type={
+			'icast': 'int',
+			'rcast': 'real',
+			'scast': 'string'
+		}[j['type']]
+		self.Expr=create_expr(j['expr'], regs)
+
+	def gen(self, regs):
+		asm=''
+		asm+='CASTED T_%s\n' % self.Type.upper()
+		asm+=prefix('\t', self.Expr.gen(regs))
+		return asm
+		
+	def is_const(self):
+		return self.Expr.is_const()
+
+	def __repr__(self):
+		return self.Type+'('+repr(self.Expr)+')'
+		
+OPER={
+	'+': 'PLUS',
+	'-': 'MINUS',
+	'*': 'MUL',
+	'/': 'DIV',
+	'%': 'MOD',
+	'<': 'LT',
+	'<=': 'LE',
+	'==': 'EQ',
+	'!=': 'NEQ',
+	'>=': 'GE',
+	'>': 'GT',
+	'&&': 'AND',
+	'||': 'OR'
+}
+class ExprOp(Expr):
+	def __init__(self, j, op, op1, op2):
+		Expr.__init__(self, j)
+		self.Op=op
+		self.Op1=op1
+		self.Op2=op2
+
+	def is_const(self):
+		return self.Op1.is_const() and self.Op2.is_const()
+	
+	def __repr__(self):
+		return '(%s %s %s)' % (repr(self.Op1), self.Op, repr(self.Op2))
+
+	def gen(self, regs):
+		asm=''
+		asm+='OP %s ; %s\n' % (OPER[self.Op], repr(self))
+		asm+=prefix('\t', self.Op1.gen(regs))
+		asm+=prefix('\t', self.Op2.gen(regs))
+		return asm
+
+class ExprOpTernary(Expr):
+	def __init__(self, j, op, op1, op2, op3):
+		Expr.__init__(self, j)
+		self.Op=op
+		self.Op1=op1
+		self.Op2=op2
+		self.Op3=op3
+
+	def is_const(self):
+		return self.Op1.is_const() and self.Op2.is_const() \
+			and self.Op3.is_const()
+	
+	def __repr__(self):
+		return '(%s? %s: %s)' % (repr(self.Op1), repr(self.Op2),
+			repr(self.Op3))
+
+	def gen(self, regs):
+		if ONLY_REQUESTS_FLAG:
+			return ''
+		else:
+			raise NotImplementedError()
+
+class ExprId(Expr):
+	def __init__(self, j, regs):
+		Expr.__init__(self, j)
+		self.Name=j[0]
+		self.Indices=[]
+		for idx in self.j[1:]:
+			self.Indices.append(create_expr(idx, regs))
+		return
+	
+	def get_jexpr(self):
+		return {
+			'type': 'id',
+			'ref': self.j
+		}
+
+	def __hash__(self):
+		return hash(repr(self))
+
+	def __eq__(self, id):
+		return repr(self)==repr(id)
+
+	def is_const(self):
+		return False
+
+class ExprIdValue(ExprId):
+	def __init__(self, j, regs):
+		ExprId.__init__(self, j, regs)
+
+	def gen(self, regs):
+		if ONLY_REQUESTS_FLAG:
+			return ''
+		info=regs.get_value(self)
+		if info[0]=='name_reg':
+			asm=''
+			asm+='VALUE %d; %s\n' % (info[1], repr(self))
+			for i in self.Indices:
+				asm+=prefix('\t', i.gen(regs))
+			asm+='EOS ; (VALUE %s)\n' % repr(self)
+			return asm
+		elif info[0]=='expr':
+			return info[1].gen(regs)
+		elif info[0]=='lc':
+			return 'LC\n'
+		elif info[0]=='symbolic':
+			return create_expr(info[1], regs).gen(regs)
+		elif info[0]=='reg':
+			return 'REG %d ; %s\n' % (info[1], regs.reg_info(info[1]))
+		elif info[0]=='generated':
+			return info[1]
+		elif info[0]=='parent_while_counter':
+			return ExprReg(info[2]).gen(regs)
+		else:
+			raise NotImplementedError(info)
+
+	def __repr__(self):
+		return '%s%s' % (self.Name, ', '.join(['[%s]' % repr(idx) \
+			for idx in self.Indices]))
+
+
+class ExprIdRef(ExprId):
+	def __init__(self, j, regs):
+		ExprId.__init__(self, j, regs)
+	
+	def gen(self, regs):
+		if ONLY_REQUESTS_FLAG:
+			return ''
+		asm=''
+		asm+='REF %d; %s\n' % (regs.get_name_reg(self.j[0]), repr(self))
+		for i in self.Indices:
+			asm+=prefix('\t', i.gen(regs))
+		asm+='EOS ; (REF %s)\n' % repr(self)
+		return asm
+
+	def __repr__(self):
+		return '%s%s' % (self.Name, ', '.join(['[%s]' % repr(idx) \
+			for idx in self.Indices]))
+
+
+def create_expr(jexpr, regs):
+	if jexpr['type']=='iconst':
+		return ExprIConst(jexpr)
+	elif jexpr['type']=='rconst':
+		return ExprRConst(jexpr)
+	elif jexpr['type']=='sconst':
+		return ExprSConst(jexpr)
+	elif jexpr['type'] in ['icast', 'rcast', 'scast']:
+		return ExprCast(jexpr, regs)
+	elif jexpr['type']=='id':
+			id=ExprIdValue(jexpr['ref'], regs)
+			return id
+	elif jexpr['type'] in ['+', '-', '*', '/', '%', '<', '==', '>',
+			'<=', '>=', '!=', '&&', '||']:
+		assert len(jexpr['operands'])==2
+		return ExprOp(jexpr, jexpr['type'],
+			create_expr(jexpr['operands'][0], regs),
+			create_expr(jexpr['operands'][1], regs))
+	elif jexpr['type']=='?:':
+		assert len(jexpr['operands'])==3
+		return ExprOpTernary(jexpr, jexpr['type'],
+			create_expr(jexpr['operands'][0], regs),
+			create_expr(jexpr['operands'][1], regs),
+			create_expr(jexpr['operands'][2], regs))
+	else:
+		raise NotImplementedError(jexpr['type'])
+
+class Locator:
+	pass
+
+class LocatorCyclicExpr(Locator):
+	def __init__(self, expr):
+		self.Expr=expr
+	
+	def gen(self, regs):
+		asm=''
+		asm+='CYCLIC\n'
+		asm+=prefix('\t', self.Expr.gen(regs))
+		return asm
+
+class LocatorCyclicMap(Locator):
+	def __init__(self, expr, params):
+		self.Expr=expr
+	
+	def gen(self, regs):
+		asm=''
+		asm+='CYCLIC\n'
+		asm+=prefix('\t', self.Expr.gen(regs))
+		return asm
+
+class ExternArgument:
+	def __init__(self, param, arg, regs, comment):
+		self.Param=param
+		self.Arg=arg
+
+		'''
+		# Regs: 
+		if self.Param=='name':
+			assert isinstance(self.Arg, ExprIdRef)
+			self.NameReg=regs.name(self.Arg.Name)
+			if self.Arg.Name in kwargs.get('subst', {}):
+				R()
+		elif isinstance(self.Arg, ExprIdValue):
+			self.NameReg=regs.name(self.Arg.Name)
+		'''
+
+	def __repr__(self):
+		return '%s %s' % (self.Param, repr(self.Arg))
+	
+	def gen(self, regs):
+		return self.Arg.gen(regs)
+
+class RegFile:
+	def __init__(self, id, parent):
+		self._regs={}
+		self._names={}
+		self.Locators={}
+		self.Parent=parent
+		self.id=id
+
+	def get_id(self):
+		if self.Parent is None:
+			return self.id
+		else:
+			return self.Parent.get_id()+'.'+self.id
+
+	def __repr__(self):
+		res='%s\n' % self.get_id()
+		if self._regs:
+			res+='REGS: %s\n' % self.regs_info()
+		for name in self._names:
+			res+='NAME: %s\n' % self.name_info(name)
+		if self.Parent is not None:
+			res+=prefix('\t', repr(self.Parent))
+		return res
+
+	def name_info(self, name):
+		res='%s:' % name
+		for kind, spec in self._names[name].items():
+			if spec is None:
+				res+=' %s' % kind
+			else:
+				res+=' %s{' % kind + ' '.join(['%s=%s' % (k, repr(v)) \
+					for k, v in spec.items()]) + '}'
+		return res
+
+	def alloc(self, comment):
+		reg=len(self._regs)
+		self._regs[reg]={
+			'type': 'general',
+			'comment': comment
+		}
+		return reg
+
+	def _set_name_info(self, name, type_, val=None, **kwargs):
+		if val is None:
+			val={}
+		if name not in self._names:
+			self._names[name]={}
+		if not kwargs.get('allow_overwrite', False):
+			assert type_ not in self._names[name]
+		self._names[name][type_]=val
+
+	def set_for_param(self, name):
+		self._set_name_info(name, 'for_param')
+
+	def set_while_param(self, name, parent_reg):
+		self._set_name_info(name, 'while_param', {
+			'parent_reg': parent_reg
+		})
+
+	def add_sub_param(self, pos, par_type, name):
+		self._set_name_info(name, 'sub_param', {
+			'pos': pos,
+			'par_type': par_type,
+		})
+		return
+		assert name not in self._sub_params
+		reg=len(self._regs)
+		self._regs[reg]={
+			'type': 'sub_arg',
+			'pos': pos,
+			'name': name,
+			'par_type': par_type
+		}
+		self._sub_params[name]=reg
+		self._set_name_info(name, 'sub_param', {
+			'reg': reg
+		})
+	
+	def set_param(self, key, val):
+		val_class=None
+		if val is not None:
+			if val.__class__==ExprReg:
+				val_class='register'
+			elif issubclass(val.__class__, Expr):
+				if val.is_const():
+					val_class='const_expr'
+				else:
+					R()
+					val_class='error'
+			elif type(val)==dict:
+				val_class='symbolic'
+			elif type(val)==list:
+				val_class='symbolic'
+				val={'type': 'id', 'ref': val}
+			elif type(val) in [str, str]:
+				val_class='generated'
+			else:
+				raise Exception(val, val.__class__)
+		res=self._names.get(key, {}).get('param', {}).get('value', None)
+		if val is None and key in self._names \
+				and 'param' in self._names[key]:
+			del self._names[key]['param']
+			if not self._names[key]:
+				del self._names[key]
+		else:
+			self._set_name_info(key, 'param', {
+				'value': val,
+				'type': val_class
+			}, allow_overwrite=True)
+		return res
+
+	def add_locator(self, jid, jexpr):
+		assert jid[0] not in self.Locators
+		params=[]
+		for idx in jid[1:]:
+			assert idx['type']=='id' and not idx['ref'][1:]
+			params.append(idx['ref'][0])
+		self.Locators[jid[0]]={
+			'vars': params,
+			'expr': jexpr
+		}
+	
+	def add_name(self, name, type_, **kwargs):
+		assert type_ in ['df', 'cf']
+		self._set_name_info(name, type_, **kwargs)
+
+	def locator_deps(self, id, regs=None):
+		if regs is None:
+			regs=self
+		if id.Name in self.Locators:
+			l=self.Locators[id.Name]
+			if len(id.Indices)!=len(l['vars']):
+				print(id, l['vars'])
+				raise Exception('idx length missmatch')
+
+			params={}
+			for i in range(len(l['vars'])):
+				key=l['vars'][i]
+				params[key]=id.j[1+i]
+				R(key, params)
+				expr=id.Indices[i]
+				assert key not in params
+				params[key]=regs.set_param(key, expr.gen(regs))
+			
+			res=json.loads(json.dumps(l['expr']))
+
+			for k, v in params.items():
+				regs.set_param(k, v)
+			return res, params
+		elif self.Parent is not None:
+			return self.Parent.locator_deps(id, regs)
+		else:
+			if ONLY_REQUESTS_FLAG:
+				return None, None
+			else:
+				raise Exception('Locator not found', id, regs.regs_info())
+		#	return None
+
+	def gen_locator(self, id, regs=None):
+		if regs is None:
+			regs=self
+		if id.Name in self.Locators:
+			l=self.Locators[id.Name]
+			if len(id.Indices)!=len(l['vars']):
+				print(id, l['vars'])
+				sys.stderr.write('%s %s\n' % (repr(id), repr(l['vars'])))
+				raise Exception('idx length missmatch')
+
+			params={}
+			for i in range(len(l['vars'])):
+				key=l['vars'][i]
+				expr=id.Indices[i]
+				assert key not in params
+				params[key]=regs.set_param(key, expr.gen(regs))
+			
+			res=LocatorCyclicExpr(create_expr(l['expr'], regs)).gen(regs)
+			for k, v in params.items():
+				regs.set_param(k, v)
+			return res
+		elif self.Parent is not None:
+			return self.Parent.gen_locator(id, regs)
+		else:
+			if ONLY_REQUESTS_FLAG:
+				return ''
+			else:
+				raise Exception('Locator not found', id, regs.regs_info())
+		#	return None
+
+	def get_name_reg(self, name):
+		if name not in self._names:
+			if self.Parent is not None:
+				parent_reg=self.Parent.get_name_reg(name)
+				reg=len(self._regs)
+				self._regs[reg]={
+					'type': 'import',
+					'name': name,
+					'parent_reg': parent_reg
+				}
+				self._set_name_info(name, 'imported', {
+					'reg': reg,
+					'parent_reg': parent_reg,
+					'name': name
+				})
+				assert name==self.Parent._regs[parent_reg]['name']
+				res=self.get_name_reg(name)
+				return res
+			else:
+				print(self)
+				raise Exception('Name not recognized', name)
+		else:
+			# According to name lookup priority:
+			spec=self._names[name]
+
+			if 'df' in spec:
+				s=spec['df']
+				if 'reg' not in s:
+					reg=len(self._regs)
+					self._regs[reg]={
+						'type': 'df',
+						'name': name
+					}
+					s['reg']=reg
+					res=self.get_name_reg(name)
+					return res
+				else:
+					return s['reg']
+			elif 'cf' in spec:
+				s=spec['cf']
+				if 'reg' not in s:
+					reg=len(self._regs)
+					self._regs[reg]={
+						'type': 'cf',
+						'name': name
+					}
+					s['reg']=reg
+					res=self.get_name_reg(name)
+					return res
+				else:
+					return s['reg']
+
+			elif 'imported' in spec:
+				assert 'reg' in spec['imported']
+				return spec['imported']['reg']
+			elif 'sub_param' in spec:
+				if spec['sub_param']['par_type'] not in ['name', 'value']:
+					raise Exception(spec['sub_param']['par_type'])
+				if 'reg' not in spec['sub_param']:
+					reg=len(self._regs)
+					self._regs[reg]={
+						'type': 'sub_arg',
+						'pos': spec['sub_param']['pos'],
+						'name': name,
+						'par_type': spec['sub_param']['par_type']
+					}
+					spec['sub_param']['reg']=reg
+					return self.get_name_reg(name)
+				else:
+					return spec['sub_param']['reg']
+			else:
+				print(self._names[name])
+				print(self.name_info(name))
+				R(name)
+		R()
+
+	def imported(self, parent_reg):
+		for reg, spec in self._regs.items():
+			if spec['type']=='import' and spec['parent_reg']==parent_reg:
+				return reg
+		# not imported, import
+		reg=len(self._regs)
+		self._regs[reg]={
+			'type': 'import',
+			'parent_reg': parent_reg
+		}
+		return self.imported(parent_reg)
+
+	def imported_lc(self, ctr_name):
+		for reg, spec in self._regs.items():
+			if spec['type']=='import_lc':
+				return reg
+		# not imported, import
+		reg=len(self._regs)
+		self._regs[reg]={
+			'type': 'import_lc',
+			'name': ctr_name
+		}
+		return self.imported_lc(ctr_name)
+
+	def arg_reg(self, arg_num, comment=None):
+		for reg, spec in self._regs.items():
+			if spec['type']=='arg':
+				return reg
+		# no such arg, alloc
+		reg=len(self._regs)
+		self._regs[reg]={
+			'type': 'arg',
+			'pos': arg_num,
+			'comment': comment
+		}
+		return self.arg_reg(arg_num)
+		
+
+	def get_parent_value(self, id):
+		pv=self.Parent.get_value(id)
+		if pv[0]=='symbolic':
+			return ('symbolic', spec['param']['value'])
+		elif pv[0]=='reg':
+			return ('reg', self.imported(pv[1]))
+		elif pv[0]=='parent_lc':
+			return ('lc', pv[1])
+		elif pv[0]=='lc':
+			return ('reg', self.imported_lc(pv[1]))
+		elif pv[0]=='name_reg':
+			return ('name_reg', self.imported(pv[1]), id)
+		elif pv[0]=='parent_while_counter':
+			return ('reg', self.arg_reg(0))
+		else:
+			print(pv)
+			raise Exception(pv)
+
+	def get_value(self, id):
+		if id.Name not in self._names:
+			if self.Parent is not None:
+				return self.get_parent_value(id)
+			else:
+				print("-------------------")
+				print(self)
+				raise NameNotRecognized(id.Name)
+
+		spec=self._names[id.Name]
+
+		if 'df' in spec:
+			if 'reg' not in spec['df']:
+				reg=len(self._regs)
+				self._regs[reg]={
+					'type': 'df',
+					'name': id.Name
+				}
+				spec['df']['reg']=reg
+				return self.get_value(id)
+			else:
+				return ('name_reg', spec['df']['reg'], id)
+		elif 'for_param' in spec:
+			assert not id.Indices
+			return ('parent_lc', id.Name)
+		elif 'while_param' in spec:
+			assert not id.Indices
+			return ('parent_while_counter', id.Name,
+				spec['while_param']['parent_reg'])
+		elif 'param' in spec and spec['param']['type']!='symbolic':
+			if spec['param']['type']=='const_expr':
+				return ('expr', spec['param']['value'])
+			elif spec['param']['type']=='register':
+				return ('reg', spec['param']['value'].Reg)
+			elif spec['param']['type']=='generated':
+				return ('generated', spec['param']['value'])
+			else:
+				raise Exception(spec['param'])
+		elif 'imported' in spec:
+			pv=self.Parent.get_value(id)
+			if pv[0]=='name_reg':
+				return ('name_reg', spec['imported']['reg'], id)
+			else:
+				raise Exception(pv)
+		elif 'sub_param' in spec:
+			if 'reg' not in spec['sub_param']:
+				reg=len(self._regs)
+				self._regs[reg]={
+					'type': 'sub_arg',
+					'pos': spec['sub_param']['pos'],
+					'name': id.Name,
+					'par_type': spec['sub_param']['par_type']
+				}
+				spec['sub_param']['reg']=reg
+				return self.get_value(id)
+			else:
+				if spec['sub_param']['par_type']=='name':
+					return ('name_reg', spec['sub_param']['reg'], id)
+				elif spec['sub_param']['par_type'] \
+						in ['int', 'real', 'string']:
+					return ('reg', spec['sub_param']['reg'])
+				else:
+					raise Exception(spec['sub_param'])
+		elif 'param' in spec and spec['param']['type']=='symbolic':
+			# we can only give symbolic, check also parent
+			if self.Parent is not None:
+				try:
+					return self.get_parent_value(id)
+				except NameNotRecognized:
+					pass
+			return ('symbolic', spec['param']['value'])
+		elif 'cf' in spec:
+			if 'reg' not in spec['cf']:
+				raise NotImplementedError(spec)
+			else:
+				return ('name_reg', spec['cf']['reg'], id)
+				
+		else:
+			print("NAME >> ", id)
+			print(self)
+			raise Exception('add according to priority', spec)
+
+		R(self.name_info(id.Name))
+		vt=self._get_value_type(id)
+		print(vt)
+		print(self)
+		R(repr(id))
+
+	def reg_info(self, reg):
+		spec=self._regs[reg]
+		if spec['type'] in ['cf', 'df']:
+			return '%d:%s(%s)' % (reg, spec['type'], spec['name'])
+		elif spec['type']=='import':
+			#assert spec['name']==self.Parent._regs[spec['parent_reg']]['name']
+			return '%d^%s' % (reg,
+				self.Parent.reg_info(spec['parent_reg']))
+		elif spec['type']=='sub_arg':
+			return '%d:arg(%s %s)' % (reg, spec['par_type'], spec['name'])
+		elif spec['type']=='arg':
+			return '%d:arg%d(%s)' % (reg, spec['pos'], spec['comment'])
+		elif spec['type']=='general':
+			return '%d:gpr(%s)' % (reg, spec['comment'])
+		elif spec['type']=='import_lc':
+			return '%d:^LC' % reg
+		else:
+			R(spec)
+
+	def regs_info(self, name=None):
+		if name is None:
+			return ', '.join([self.reg_info(reg) \
+				for reg in self._regs])
+	def info(self, name):
+		if name in self._sub_params:
+			return 'sub_param %s' % name
+		elif name in self._local_names:
+			return 'local_name %s %s' % (self._regs[self._local_names[name]]['type'], name)
+		elif name in self._import:
+			return 'imported %s : %s' % (name, self.Parent.info(name))
+		elif self.Parent is not None:
+			return 'n/a %s' % self.Parent.info(name)
+		else:
+			return 'n/a %s' % name
+
+	def gen(self):
+		if not self._regs:
+			return '\t; No registers\n'
+		asm=''
+		asm+='\t; Registers initialization\n'
+		asm+='\tALLOC %d ; %s\n' % (len(self._regs), self.regs_info())
+		for reg in range(len(self._regs)):
+			assert reg in self._regs
+			spec=self._regs[reg]
+			if spec['type'] in ['cf', 'df']:
+				asm+='\tNAME %d ; %s %s\n' % (reg, spec['type'],
+					spec['name'])
+			elif spec['type']=='import':
+				asm+='\tIMPORT %d %d ; %s\n' % (reg, spec['parent_reg'],
+					spec['name'] if 'name' in spec else self.reg_info(reg))
+			elif spec['type']=='import_lc':
+				asm+='\tIMPORT_LC %d ; %s\n' % (reg,
+					spec['name'])
+			elif spec['type']=='sub_arg':
+				asm+='\tARG %d %d ; %s %s\n' % (reg, spec['pos'],
+					spec['par_type'], spec['name'])
+			elif spec['type']=='arg':
+				asm+='\tARG %d %d ; %s\n' % (reg, spec['pos'],
+					spec['comment'])
+			elif spec['type']=='general':
+				asm+='\t;GPR R%d - %s\n' % (reg, spec['comment'])
+			else:
+				raise NotImplementedError(spec['type'])
+		asm+='\n'
+		return asm
+		
+
+def parse_bi(items, bi, regs, parent):
+	if bi['type']=='dfs':
+		for df in bi['names']:
+			regs.add_name(df, 'df')
+			assert df not in parent._scope_names
+			parent._scope_names[df]='df'
+	elif bi['type']=='exec':
+		if 'id' in bi:
+			regs.add_name(bi['id'][0], 'cf', allow_overwrite=True)
+		sub=ja[bi['code']]
+		if sub['type']=='extern':
+			items.append(BiExecExtern(bi, regs, parent))
+		elif sub['type']=='struct':
+			items.append(BiExecStruct(bi, regs, parent))
+		else:
+			raise NotImplementedError(sub['type'])
+	elif bi['type']=='for':
+		items.append(BiFor(bi, regs, parent))
+	elif bi['type']=='while':
+		items.append(BiWhile(bi, regs, parent))
+	elif bi['type']=='if':
+		items.append(BiIf(bi, regs, parent))
+	else:
+		raise NotImplementedError(bi['type'])
+
+_last_id=0
+def gen_id():
+	global _last_id
+	_last_id+=1
+	return _last_id
+class Scope:
+	def __init__(self, parent):
+		self.Parent=parent
+		if not hasattr(self, '_scope_names'):
+			self._scope_names={}
+
+	def _get_name_type(self, name):
+		if name in self._scope_names:
+			return self._scope_names[name]
+		elif self.Parent:
+			return self.Parent._get_name_type(name)
+		else:
+			raise NameNotRecognized(name)
+
+def jexpr_subst(loc_jexpr, params):
+	res=json.loads(json.dumps(loc_jexpr))
+	if not params:
+		return res
+	R(res, params)
+	
+
+class Bi(Scope):
+	def __init__(self, bi, regs, parent):
+		Scope.__init__(self, parent)
+		self.j=bi
+		self.Label='_bi_%d' % gen_id()
+		self.Locator=None
+		self.Regs=RegFile('?', regs)
+		self.Requests=[]
+		self.Waits=[]
+		self.Posts=[]
+		self.Pushes=[]
+		self.Deletes=[]
+		self.Setdfs=[]
+		self.isStealable = False
+		self.j_outargs=list()
+
+		for rule in self.j.get('rules', []):
+			if rule['ruletype']=='enum' and rule['property']=='request':
+				assert rule['items']
+				self.Requests.append([])
+				for ref in rule['items']:
+					id=ExprIdRef(ref, self.Regs)
+					self.Requests[-1].append(id)
+			elif rule['ruletype']=='assign' \
+					and rule['property']=='req_count':
+				id=ExprIdRef(rule['id'], self.Regs)
+				self.Posts.append({
+					'id': id,
+					'count': create_expr(rule['val'], self.Regs)
+				})
+			elif rule['ruletype']=='enum' \
+					and rule['property']=='req_unlimited':
+				for it in rule['items']:
+					self.Posts.append({
+						'id': ExprIdRef(it, self.Regs),
+						'count': None
+					})
+			elif rule['ruletype']=='enum' and rule['property']=='wait':
+				assert rule['items']
+				for ref in rule['items']:
+					id=ExprIdRef(ref, self.Regs)
+					self.Waits.append(id)
+			elif rule['ruletype']=='map' and rule['property']=='afterpush':
+				cfid=ExprIdRef(rule['expr']['ref'], self.Regs)
+				self.Pushes.append({
+					'id': ExprIdRef(rule['id'], self.Regs),
+					'cf': cfid
+				})
+			elif rule['ruletype']=='indexed':
+				for df in rule['dfs']:
+					self.Deletes.append(ExprIdRef(df['ref'], self.Regs))
+			elif rule['ruletype']=='indexed_setdfs':
+				for df in rule['dfs']:
+					self.Setdfs.append(ExprIdRef(df['ref'], self.Regs))
+					self.j_outargs.append(df['ref'])
+			elif rule['ruletype']=='enum' and rule['property']=='delete':
+				for df in rule['items']:
+					self.Deletes.append(ExprIdRef(df, self.Regs))
+			elif rule['ruletype']=='flags':
+				for df in rule['flags']:
+					if df == 'stealable':
+						 self.isStealable = True
+	def is_requested(self, id, preliminary=False):
+		if preliminary:
+			return False
+		for req_set in self.Requests:
+			if id in req_set:
+				return True
+		return False
+
+	def is_requestable(self, expr):
+		assert expr['type']=='id'
+		name_type=self._get_name_type(expr['ref'][0])
+		if name_type in ['df', 'name']:
+			return True
+		else:
+			return False
+
+	def parse_rules_deps(self, resolved_deps, exclude=[]):
+		deps=set()
+		for r in self.j.get('rules', []):
+			if r['ruletype']=='enum' and r['property']=='delete':
+				for it in r['items']:
+					for idx in it[1:]:
+						deps.update(self.parse_deps(idx, resolved_deps))
+			elif r['ruletype'] in ['indexed', 'indexed_setdfs']:
+				for it in r['dfs']:
+					for idx in it['ref'][1:]:
+						deps.update(self.parse_deps(idx, resolved_deps))
+		return set([x for x in deps if x not in exclude])
+
+	def parse_deps(self, expr, resolved_deps):
+		if expr['type'] in ['iconst', 'rconst', 'sconst']:
+			return set()
+		elif expr['type']=='id':
+			idx_deps=set()
+			for idx in expr['ref'][1:]:
+				res=self.parse_deps(idx, resolved_deps)
+				for r in res:
+					if r not in resolved_deps:
+						idx_deps.add(r)
+			if idx_deps:
+				return idx_deps
+			else:
+				if json.dumps(expr, sort_keys=True) in resolved_deps:
+					return set()
+				elif self.is_requestable(expr):
+					return set([json.dumps(expr, sort_keys=True)])
+				else:
+					return set()
+		elif expr['type'] in '+-*/%' \
+				or expr['type'] in ['==', '!=', '>', '>=', '<', '<=',
+				'&&', '||', '?:']:
+			res=set()
+			for op in expr['operands']:
+				res.update(self.parse_deps(op, resolved_deps))
+			return res
+		elif expr['type'] in ['icast', 'rcast', 'scast']:
+			return self.parse_deps(expr['expr'], resolved_deps)
+		else:
+			R(expr)
+	
+	def insert_req_unlimited(self):
+		if not INSERT_REQ_UNLIMITED:
+			return
+
+		req_set=set()
+		for r in self.j.get('rules', []):
+			if r['ruletype']=='assign' and r['property']=='req_count':
+				req_set.add(r['id'][0])
+			elif  r['ruletype']=='enum' and r['property']=='req_unlimited':
+				for it in r['items']:
+					req_set.add(it[0])
+			elif r['ruletype']=='map' and r['property']=='afterpush':
+				req_set.add(r['id'][0])
+			elif r['ruletype']=='enum' and r['property']=='drop':
+				for it in r['items']:
+					req_set.add(it[0])
+
+		unset_args=[arg for arg in self.j_outargs if arg[0] not in req_set]
+		
+		rule={
+			'ruletype': 'enum',
+			'property': 'req_unlimited',
+			'items': []
+		}
+		for arg in unset_args:
+			self.Posts.append({
+				'id': ExprIdRef(arg, self.Regs),
+				'count': None
+			})
+			rule['items'].append(arg)
+		if 'rules' not in self.j:
+			self.j['rules']=[]
+		rule['begin']=self.j['begin']
+		self.j['rules'].append(rule)
+	def parse_locator(self):
+		for i in range(len(self.j.get('rules', []))):
+			rule=self.j['rules'][i]
+			if rule['ruletype']=='expr' \
+					and rule['property']=='locator_cyclic':
+				self.set_locator(LocatorCyclicExpr(
+					create_expr(rule['expr'], self.Regs)))
+
+	def gen_early_init(self):
+		return ''
+
+	def gen(self):
+		part1 = \
+			self.gen_label() + \
+			self.gen_comment()
+		
+		part3 = \
+			self.gen_early_init() + \
+			self.gen_migrate() + \
+			self.gen_requests() + \
+			self.gen_exec() + \
+			self.gen_setdfs() + \
+			self.gen_posts() + \
+			self.gen_pushes() + \
+			self.gen_deletes() + \
+			self.gen_exit()
+
+		part2 = \
+			self.Regs.gen()
+
+		return part1+part2+part3
+			
+	def gen_label(self):
+		return '%s:\n' % self.Label
+
+	def gen_migrate(self):
+		asm=''
+		asm+='MIGRATE\n'
+
+		# migrate deps
+		all_deps=[]
+		deps=set()
+		while True:
+			new_deps=set()
+			if self.Locator is not None:
+				new_deps.update(self.parse_deps(self.Locator.Expr.get_jexpr(), deps))
+			elif hasattr(self, 'Id'):
+				loc_jexpr, params=self.Regs.locator_deps(self.Id)
+				if loc_jexpr is not None:
+					loc_jexpr=jexpr_subst(loc_jexpr, params)
+					new_deps.update(self.parse_deps(loc_jexpr, deps))
+
+			if not new_deps:
+				break
+			all_deps.append(set(new_deps))
+			deps.update(new_deps)
+
+		if AUTO_REQUESTS:
+			add_auto_requests(self, all_deps, True)
+
+		if ONLY_REQUESTS_FLAG:
+			return ''
+		if self.Locator is None:
+			asm+=prefix('\t', self.Regs.gen_locator(self.Id))
+		else:
+			asm+=prefix('\t', self.Locator.gen(self.Regs))
+		return prefix('\t', asm)
+	
+	def gen_requests(self):
+		asm=''
+		for req_set in self.Requests:
+			for id in req_set:
+				asm+='\t.info "%s"\n' % repr(id)
+				asm+='\tVREQUEST ; %s\n' % repr(id)
+				asm+=prefix('\t\t', id.gen(self.Regs))
+				asm+=prefix('\t\t', self.Regs.gen_locator(id))
+			for id in req_set:
+				asm+='\tVWAIT ; %s\n' %  repr(id)
+				asm+=prefix('\t\t', id.gen(self.Regs))
+		if self.Waits:
+			asm+='\tLISTEN\n'
+			asm+=prefix('\t\t', self.Id.gen(self.Regs))
+		for ref in self.Waits:
+			asm+='\tVWAIT ; %s\n' %  repr(ref)
+			asm+=prefix('\t\t', ref.gen(self.Regs))
+			
+		asm+='\n'
+		return asm
+	
+	def gen_posts(self):
+		asm=''
+		for p in self.Posts:
+			asm+='\tVPOST ; %s\n' % repr(p['id'])
+			asm+=prefix('\t\t', p['id'].gen(self.Regs))
+			asm+=prefix('\t\t', self.Regs.gen_locator(p['id']))
+			if p['count'] is not None:
+				asm+=prefix('\t\t', p['count'].gen(self.Regs))
+			else:
+				asm+='\t\tUNDEFINED\n'
+		return asm
+	
+	def gen_pushes(self):
+		asm=''
+		for p in self.Pushes:
+			asm+='\tVPUSH ; %s\n' % repr(p['id'])
+			asm+=prefix('\t\t', p['id'].gen(self.Regs))
+			asm+=prefix('\t\t', p['cf'].gen(self.Regs))
+			asm+=prefix('\t\t', self.Regs.gen_locator(p['cf']))
+		return asm
+	
+	def gen_deletes(self):
+		asm=''
+		for d in self.Deletes:
+			asm+='\tDELETE ; %s\n' % repr(d)
+			asm+=prefix('\t\t', d.gen(self.Regs))
+			asm+=prefix('\t\t', self.Regs.gen_locator(d))
+		return asm
+	
+	def gen_setdfs(self):
+		asm=''
+		for d in self.Setdfs:
+			asm+='\tVMOV ; setdf %s=1\n' % repr(d)
+			asm+=prefix('\t\t', d.gen(self.Regs))
+			asm+='\t\tICONST 1\n'
+		return asm
+	
+	def gen_exit(self):
+		asm=''
+		if self.Waits:
+			asm+='\tUNLISTEN\n'
+			asm+=prefix('\t\t', self.Id.gen(self.Regs))
+		asm+='\tEXIT ; %s\n\n' % self.Label
+		return asm
+
+	def set_locator(self, locator):
+		assert self.Locator is None
+		self.Locator=locator
+
+	
+class BiBody(Bi):
+	def __init__(self, bi, regs, parent):
+		Bi.__init__(self, bi, regs, parent)
+
+		self.Items=[]
+
+	def parse_body(self, regs=None):
+		if regs is None:
+			regs=self.Regs
+		for bi in self.j['body']:
+			parse_bi(self.Items, bi, regs, self)
+
+def add_auto_requests(self, all_deps, preliminary=False):
+	for x in all_deps:
+		self.Requests.append([])
+		rule={
+			'ruletype': 'enum',
+			'property': 'request_preliminary' if preliminary else 'request',
+			'items': []
+		}
+		for y in x:
+			id=ExprIdRef(
+				json.loads(y)['ref'], self.Regs)
+			if not self.is_requested(id, preliminary) and not \
+					(id in self.Waits and not preliminary):
+				self.Requests[-1].append(id)
+				rule['items'].append(id.j)
+		rule['begin']=self.j['begin']
+		if not self.Requests[-1]:
+			self.Requests=self.Requests[:-1]
+		else:
+			self.j['rules'].append(rule)
+
+class BiFor(BiBody):
+	def __init__(self, bi, regs, parent):
+		self._scope_names={bi['var']: 'for_param'}
+		BiBody.__init__(self, bi, regs, parent)
+		self.Regs.id='for'
+
+		self._scope_names[self.j['var']]='for_param'
+
+		self.First=create_expr(self.j['first'], self.Regs)
+		self.Last=create_expr(self.j['last'], self.Regs)
+
+		self.Regs.set_for_param(self.j['var'])
+
+		self.BodyRegs=RegFile('body', self.Regs)
+
+		self.parse_body(self.BodyRegs)
+
+		self.parse_locator()
+
+		self.insert_req_unlimited()
+
+		all_deps=[]
+		deps=set()
+		while True:
+			new_deps=set()
+			new_deps.update(self.parse_deps(self.j['first'], deps))
+			new_deps.update(self.parse_deps(self.j['last'], deps))
+			new_deps.update(self.parse_rules_deps(deps))
+			if not new_deps:
+				break
+			all_deps.append(set(new_deps))
+			deps.update(new_deps)
+
+		if AUTO_REQUESTS:
+			add_auto_requests(self, all_deps)
+
+	def gen_comment(self):
+		return '\t; for %s = %s .. %s\n' % (self.j['var'],
+			repr(self.First), repr(self.Last))
+
+	def gen_exec(self):
+		id=gen_id()
+		forks_label='_for_body_%d' % id
+		label_bi='_for_body_bi_%d' % id
+		end_label='_for_body_end_%d' % id
+		asm=''
+		asm+='\tFOR %s\n' % forks_label
+		asm+='\t\t; for first\n'
+		asm+=prefix('\t\t', self.First.gen(self.Regs))
+		asm+='\t\t; for last\n'
+		asm+=prefix('\t\t', self.Last.gen(self.Regs))
+		asm+='\tJMP %s\n' % end_label
+
+		asm+='%s:\n' % forks_label
+		part1=asm
+
+		asm=''
+		for it in self.Items:
+			asm+='\tFORK %s\n' % it.Label
+
+		asm+='\tEXIT ; for body forks\n'
+
+		asm+='%s:\n' % label_bi
+		asm+=gen_body(self)
+
+		asm+='%s:\n' % end_label
+		part3=asm
+
+		part2=self.BodyRegs.gen()
+
+		return part1 + part2 + part3
+
+class BiIf(BiBody):
+	def __init__(self, bi, regs, parent):
+		BiBody.__init__(self, bi, regs, parent)
+		self.Regs.id='if'
+
+		self.Cond=create_expr(self.j['cond'], self.Regs)
+		self.CondReg=self.Regs.alloc('if_cond')
+
+		id=gen_id()
+		self.cond_label='_if_cond_%d' % id
+		self.body_label='_if_body_%d' % id
+		self.end_label='_if_end_%d' % id
+
+		self.parse_body()
+		self.parse_locator()
+		self.insert_req_unlimited()
+
+		all_deps=[]
+		deps=set()
+		while True:
+			new_deps=set()
+			new_deps.update(self.parse_deps(self.j['cond'], deps))
+			new_deps.update(self.parse_rules_deps(deps))
+			if not new_deps:
+				break
+			all_deps.append(set(new_deps))
+			deps.update(new_deps)
+
+		if AUTO_REQUESTS:
+			add_auto_requests(self, all_deps)
+
+	def gen_comment(self):
+		return '\t; if %s\n' % repr(self.Cond)
+
+	def gen_exec(self):
+		asm=''
+		#condition
+		asm+='\tMOV %d ; if condition\n' % self.CondReg
+		asm+=prefix('\t\t', self.Cond.gen(self.Regs))
+		asm+='\tJNE %d %s\n' % (self.CondReg, self.body_label)
+		asm+='\t\tICONST 0\n'
+		#end
+		asm+='\tJMP %s\n' % self.end_label
+		#body
+		asm+='%s:\n' % self.body_label
+		for i in self.Items:
+			asm+='\tFORK %s\n' % i.Label
+		asm+='\tJMP %s\n\n' % self.end_label
+
+		asm+=gen_body(self)
+		asm+='%s:\n' % self.end_label
+		return asm
+
+
+class BiWhile(BiBody):
+	def __init__(self, bi, regs, parent):
+		self._scope_names={bi['var']:'while_param'}
+		BiBody.__init__(self, bi, regs, parent)
+		self.Regs.id='while'
+
+		self.CounterReg=ExprReg(self.Regs.alloc('while_counter'))
+		self.Regs.set_while_param(self.j['var'], self.CounterReg.Reg)
+
+		self.Cond=create_expr(self.j['cond'], self.Regs)
+		self.Start=create_expr(self.j['start'], self.Regs)
+		self.Wout=ExprIdRef(self.j['wout']['ref'], self.Regs)
+		self.CondReg=self.Regs.alloc('while_cond')
+
+		self.j_outargs.append(self.j['wout']['ref'])
+
+		id=gen_id()
+		self.cond_label='_while_cond_%d' % id
+		self.body_label='_while_body_%d' % id
+		self.next_label='_while_next_%d' % id
+		self.end_label='_while_end_%d' % id
+
+		self.parse_body()
+		self.parse_locator()
+		self.insert_req_unlimited()
+
+		all_deps=[]
+		deps=set()
+		while True:
+			new_deps=set()
+			new_deps.update(self.parse_deps(self.j['start'], deps))
+			new_deps.update(self.parse_deps(self.j['cond'], deps))
+			new_deps.update(self.parse_rules_deps(deps, [
+				json.dumps(self.j['wout'], sort_keys=True)]))
+			if not new_deps:
+				break
+			all_deps.append(set(new_deps))
+			deps.update(new_deps)
+
+		if AUTO_REQUESTS:
+			add_auto_requests(self, all_deps)
+
+	def gen_comment(self):
+		return '\t; while (%s), %s = %s .. out %s\n' % (repr(self.Cond),
+			self.j['var'], repr(self.Start), repr(self.Wout))
+
+	def gen_early_init(self):
+		asm=''
+		asm+='\tMOV %d ; while counter start\n' % self.CounterReg.Reg
+		asm+=prefix('\t\t', self.Start.gen(self.Regs))
+		asm+='\n'
+		asm+='%s:\n' % self.next_label
+		return asm
+
+	def gen_exec(self):
+		asm=''
+		#condition
+		asm+='\tUNSET %d\n' % self.CondReg
+		asm+='\tMOV %d ; while condition\n' % self.CondReg
+		asm+=prefix('\t\t', self.Cond.gen(self.Regs))
+		asm+='\tJNE %d %s\n' % (self.CondReg, self.body_label)
+		asm+='\t\tICONST 0\n'
+		#end
+		asm+='\t; set wout\n'
+		asm+='\tVMOV\n'
+		asm+=prefix('\t\t', self.Wout.gen(self.Regs))
+		asm+=prefix('\t\t', self.CounterReg.gen(self.Regs))
+		asm+='\tJMP %s\n' % self.end_label
+		#body
+		asm+='%s:\n' % self.body_label
+		for i in self.Items:
+			asm+='\tCALL %s\n' % i.Label
+			asm+=prefix('\t\t', self.CounterReg.gen(self.Regs))
+			asm+='\t\tEOS ; (CALL %s)\n' % i.Label
+		# increment
+		asm+='\tINC %d ; while counter increment\n' % self.CounterReg.Reg
+		asm+='\tJMP %s\n\n' % self.next_label
+
+		asm+=gen_body(self)
+		asm+='%s:\n' % self.end_label
+		return asm
+
+
+class BiExec(Bi):
+	def __init__(self, bi, regs, parent):
+		Bi.__init__(self, bi, regs, parent)
+		self.CodeName=self.j['code']
+		self.code=ja[self.CodeName]
+
+		self.Id=ExprIdRef(self.j['id'], self.Regs)
+		self.Regs.id=repr(self.Id)
+
+		self.Args=[]
+		assert len(self.code['args'])==len(self.j['args'])
+		for i in range(len(self.j['args'])):
+			param=self.code['args'][i]['type']
+			arg=self.j['args'][i]
+			if param=='name':
+				self.Args.append(ExternArgument(param,
+					ExprIdRef(arg['ref'], self.Regs), self.Regs,
+					"%d" % i))
+				self.j_outargs.append(arg['ref'])
+			else:
+				self.Args.append(ExternArgument(param,
+					create_expr(arg, self.Regs), self.Regs,
+					"%d" % i))
+
+		self.parse_locator()
+
+	def gen_comment(self):
+		params=[x['type'] for x in self.code['args']]
+		return '\t; cf %s: %s(%s)\n' % (self.Id, self.CodeName,
+				', '.join(params))
+
+class BiExecExtern(BiExec):
+	def __init__(self, bi, regs, parent):
+		BiExec.__init__(self, bi, regs, parent)
+
+		self.insert_req_unlimited()
+		
+		all_deps=[]
+		deps=set()
+		while True:
+			new_deps=set()
+			for i in range(len(self.j['args'])):
+				par_type=self.Args[i].Param
+				if par_type!='name':
+					new_deps.update(self.parse_deps(self.j['args'][i],
+						deps))
+				else:
+					for idx in self.j['args'][i]['ref'][1:]:
+						new_deps.update(self.parse_deps(idx, deps))
+			new_deps.update(self.parse_rules_deps(deps, self.get_computed()))
+			if not new_deps:
+				break
+			all_deps.append(set(new_deps))
+			deps.update(new_deps)
+
+		if AUTO_REQUESTS:
+			add_auto_requests(self, all_deps)
+
+	def __repr__(self):
+		return 'cf %s: %s(%s))' % (repr(self.Id),
+			self.CodeName, ', '.join(map(repr, self.Args)))
+
+	
+	def get_computed(self):
+		res=set([])
+		for i in range(len(self.j['args'])):
+			arg=self.j['args'][i]
+			par_type=self.code['args'][i]['type']
+
+			if par_type=='name':
+				assert arg['type']=='id'
+				df=json.dumps(arg, sort_keys=True)
+				assert df not in res # duplicate out
+				res.add(df)
+		return res
+
+
+
+	def gen_exec(self):
+		asm=''
+		if self.isStealable == True:
+			asm+='\tCHECK_STEAL\n'
+		asm+='\tEXEC %s\n' % self.CodeName
+		for a in self.Args:
+			asm+=prefix('\t\t', a.gen(self.Regs))
+		asm+='\t\tEOS ; (%s args)\n' % self.CodeName
+		asm+='\n'
+		if self.isStealable == True:
+			asm+= self.gen_migrate()
+		return asm
+
+class BiExecStruct(BiExec):
+	def __init__(self, bi, regs, parent):
+		BiExec.__init__(self, bi, regs, parent)
+
+		#self.insert_req_unlimited()
+
+		all_deps=[]
+		deps=set()
+		while True:
+			new_deps=set()
+			for i in range(len(self.j['args'])):
+				par_type=self.Args[i].Param
+				if par_type!='name':
+					new_deps.update(self.parse_deps(self.j['args'][i],
+						deps))
+				else:
+					for idx in self.j['args'][i]['ref'][1:]:
+						new_deps.update(self.parse_deps(idx, deps))
+			new_deps.update(self.parse_rules_deps(deps))
+			if not new_deps:
+				break
+			all_deps.append(set(new_deps))
+			deps.update(new_deps)
+
+		if AUTO_REQUESTS:
+			add_auto_requests(self, all_deps)
+	
+
+	def gen_exec(self):
+		asm=''
+		asm+='\tCALL %s\n' % self.CodeName
+		for i in range(len(self.Args)):
+			asm+=prefix('\t\t', self.Args[i].gen(self.Regs))
+		asm+='\tEOS ; (CALL %s)\n' % self.CodeName
+		return asm
+
+
+class Sub(Scope):
+	def __init__(self, fa, sub_name, parent):
+		Scope.__init__(self, parent)
+		self._names={}
+		self.FA=fa
+		self.Name=sub_name
+		self.j=fa.j[sub_name]
+		self.Regs=RegFile(sub_name, None)
+		self.Locators={}
+	
+	def locator(self, id, regs):
+		for rule in self.j.get('rules', []):
+			if rule['ruletype']=='map' \
+					and rule['property']=='locator_cyclic' \
+					and id.Name==rule['id'][0]:
+				if id.Indices or rule['id'][1:]:
+					if len(id.Indices)!=len(rule['id'][1:]):
+						print(id)
+						R(rule['id'])
+					params=kwargs.get('subst', {})
+					for i in range(len(rule['id'][1:])):
+						param=rule['id'][1:][i]
+						assert param['type']=='id'
+						assert not param['ref'][1:]
+						param_name=param['ref'][0]
+						assert param_name not in params
+						params[param_name]=id.Indices[i]
+					return LocatorCyclicExpr(create_expr(rule['expr'], regs,
+						subst=params))
+				return LocatorCyclicExpr(create_expr(rule['expr'], regs,
+					**kwargs))
+		raise NotImplementedError('no locator?', id)
+
+class SubExtern(Sub):
+	def __init__(self, fa, sub_name, parent):
+		Sub.__init__(self, fa, sub_name, parent)
+	
+	def gen(self):
+		asm=''
+		par_types=[x['type'] for x in self.j['args']]
+		asm+='\t.info "import %s(%s) as %s"\n' % (self.j['code'],
+			', '.join(par_types), self.Name)
+		asm+='%s:\n' % self.Name
+		if cpp_codes_flag:
+			asm+='	.str "cpp_%s"\n' % self.j['code']
+		else:
+			asm+='	.str "%s"\n' % self.j['code']
+
+		for param in self.j['args']:
+			asm+='	PARAM_%s\n' % param['type'].upper()
+		asm+='	EOS ; (import params)\n\n'
+		return asm
+
+class SubStruct(Sub):
+	def __init__(self, fa, sub_name, parent):
+		Sub.__init__(self, fa, sub_name, parent)
+		self.Items=[]
+
+		for i in range(len(self.j['args'])):
+			arg=self.j['args'][i]
+			self.Regs.add_sub_param(i, arg['type'], arg['id'])
+			self._scope_names[arg['id']]=arg['type']
+
+		for k in self.j:
+			if k not in ['body', 'where', 'args', 'type', 'rules',
+				'begin', 'end']:
+				raise NotImplementedError(k)
+
+		self.parse_locators()
+
+		for bi in self.j['body']:
+			parse_bi(self.Items, bi, self.Regs, self)
+
+
+
+
+	def parse_locators(self):
+		for rule in self.j.get('rules', []):
+			if rule['ruletype']=='map' \
+					and rule['property']=='locator_cyclic':
+				for idx in rule['id'][1:]:
+					assert idx['type']=='id' and not idx['ref'][1:]
+				self.Regs.add_locator(rule['id'], rule['expr'])
+
+	def gen(self):
+		asm=''
+		params=[]
+		for p in self.j['args']:
+			params.append('%s %s' % (p['type'], p['id']))
+		asm+='; sub %s(%s)\n' % (self.Name, ', '.join(params))
+		asm+='%s:\n' % self.Name
+
+		#asm+=self.gen_alloc()
+		#asm+=self.gen_names()
+
+		part3=\
+			self.gen_forks() + \
+			gen_body(self)
+
+		part2=self.Regs.gen()
+		return asm+part2+part3
+
+	def gen_forks(self):
+		asm=''
+		for bi in self.Items:
+			asm+='\tFORK %s\n' % bi.Label
+		asm+='\n\tEXIT ; (sub %s)\n\n' % self.Name
+		return asm
+
+def gen_body(self):
+	asm=''
+	for bi in self.Items:
+		asm+=bi.gen()
+	return asm
+
+def create_sub(fa, sub_name):
+	sub_type=fa.j[sub_name]['type']
+	if sub_type=='extern':
+		return SubExtern(fa, sub_name, None)
+	elif sub_type=='struct':
+		return SubStruct(fa, sub_name, None)
+	else:
+		raise NotImplementedError(sub_type)
+
+class Fa:
+	def __init__(self, ja):
+		self.j=ja
+		self.Subs={}
+
+		for sub_name in ja:
+			assert sub_name not in self.Subs
+			self.Subs[sub_name]=create_sub(self, sub_name)
+
+
+	def gen(self):
+		asm=''
+		asm+='; ' + ', '.join(sys.argv) + '\n'
+		asm+='\tinclude "../../fasm/common.inc"\n\n'
+		asm+='\t.info "jump to main"\n'
+		asm+='\tJMP main\n\n'
+
+		for sub in self.Subs:
+			asm+=self.Subs[sub].gen()
+		return asm
+
+def show_help():
+	print('''\
+Usage:
+	python3 %s input.ja output.fasm [--cpp-codes cpp_codes] [--only-requests]
+	(will generate cpp_codes.h and cpp_codes.cpp if --cpp-codes is set)
+	With --only-requests nothing will happen except writing a modified
+	json with additional rules (posts/requests unlimited)
+''' % sys.argv[0])
+
+if '--help' in sys.argv[1:]:
+	show_help()
+	sys.exit(0)
+
+cpp_codes_flag='--cpp-codes' in sys.argv[3:]
+ONLY_REQUESTS_FLAG='--only-requests' in sys.argv[3:]
+
+
+ja=json.loads(open(sys.argv[1]).read())
+
+content=Fa(ja).gen()
+
+if ONLY_REQUESTS_FLAG:
+	open(sys.argv[2], 'w').write(json.dumps(ja, indent=4, sort_keys=True))
+	sys.exit(0)
+open(sys.argv[2], 'w').write(content)
+
+if cpp_codes_flag:
+	flag_idx=sys.argv[3:].index('--cpp-codes')
+	cpp_codes_path=sys.argv[3:][flag_idx+1]
+
+	funcs=[]
+	for name in ja:
+		sub=ja[name]
+		if sub['type']!='extern':
+			continue
+		func={
+			'body': '{\n',
+			'call': '\t%s(' % sub['code'],
+			'sig': 'void cpp_%s(' % sub['code'],
+			'cpp_sig': 'void %s(' % sub['code']
+		}
+
+		for i in range(len(sub['args'])):
+			param=sub['args'][i]
+			if i>0:
+				func['sig']+=', '
+				func['cpp_sig']+=', '
+				func['call']+=', '
+
+			if param['type']=='int':
+				func['sig']+='int arg%d' % i
+				func['cpp_sig']+='int arg%d' % i
+				func['call']+='arg%d' % i
+			elif param['type']=='real':
+				func['sig']+='double arg%d' % i
+				func['cpp_sig']+='double arg%d' % i
+				func['call']+='arg%d' % i
+			elif param['type']=='string':
+				func['sig']+='const char *arg%d' % i
+				func['cpp_sig']+='const char *arg%d' % i
+				func['call']+='arg%d' % i
+			elif param['type']=='value':
+				func['sig']+='void *arg%d, size_t arg%d_size' % (i, i)
+				func['cpp_sig']+='const InputDF &arg%d' % i
+				func['body']+='\tInputDF in_arg%d(arg%d, arg%d_size);\n' \
+					% (i, i, i)
+				func['call']+='in_arg%d' % i
+			elif param['type']=='name':
+				func['sig']+='void **arg%d, size_t *arg%d_size' % (i, i)
+				func['cpp_sig']+='OutputDF &arg%d' % i
+				func['body']+='\tOutputDF out_arg%d(arg%d, arg%d_size);\n'\
+					% (i, i, i)
+				func['call']+='out_arg%d' % i
+			else:
+				R(param)
+		func['sig']+=')'
+		func['cpp_sig']+=')'
+		func['call']+=');\n'
+		func['body']+=func['call']
+		func['body']+='}\n'
+		funcs.append(func)
+
+	fh=open(cpp_codes_path+'.h', 'w')
+	
+	fh.write('#pragma once\n')
+	fh.write('// generated CPP wrappers for code fragments\n')
+	fh.write('#include "ucenv/ucenv.h"\n')
+	fh.write('using namespace luna::ucenv;\n')
+	for func in funcs:
+		fh.write('extern "C" %s;\n' % func['sig']);
+	fh.close()
+
+	fcpp=open(cpp_codes_path+'.cpp', 'w')
+	fcpp.write('// generated CPP wrappers for code fragments\n')
+	fcpp.write('#include "%s.h"\n' % cpp_codes_path)
+	for func in funcs:
+		fcpp.write('extern "C" %s;\n' % func['cpp_sig'])
+		fcpp.write('extern "C"\n%s\n%s\n' % (func['sig'], func['body']))
+	fcpp.close()
