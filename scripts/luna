@@ -563,6 +563,12 @@ def main():
 		out=out.decode('utf-8')
 		err=err.decode('utf-8')
 
+		info('parsing')
+		cmd = [os.path.join(conf['LUNA_HOME'], 'bin', 'parser')]
+		cmd += [os.path.join(conf['BUILD_DIR'], 'preprocessed.fa')]
+		cmd += ['-o', os.path.join(conf['BUILD_DIR'], 'program.ja')]
+		cmd += ['-h', os.path.join(conf['BUILD_DIR'], 'headers.ja')]
+
 		if p.returncode!=0:
 			raise FatalError('compilation failed: ' \
 				+ 'see error messages below:\n%s' % err)

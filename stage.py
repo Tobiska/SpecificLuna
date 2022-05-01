@@ -19,6 +19,9 @@ class Requirement:
     def __init__(self, requirement):
         self.str_requirement = requirement
 
+    def __str__(self):
+        return self.str_requirement
+
 """
     tag - уникальный идентификатор реализуемого частного решения ('pic-method')
     parent - родитель ветки, для отката. 
@@ -34,11 +37,11 @@ class Meta:
 
 
 class Stage(ABC):
-    def __init__(self, parent, meta):
+    def __init__(self, parent=None):
         self.id = uuid.uuid4()
         self.parent = parent
         self.next_stages = queue.PriorityQueue()
-        self.meta = meta
+        self.meta = None
 
     @abstractmethod
     def get_requirements(self) -> [Requirement]:
@@ -51,9 +54,11 @@ class Stage(ABC):
     def get_environment(self) -> Environment:
         return self.meta.environment
 
-    @abstractmethod
     def meta(self) -> str:
         pass
+
+    def set_meta(self, meta):
+        self.meta = meta
 
     def add_command(self, stage, priority):
         self.next_stages.put((priority, stage))

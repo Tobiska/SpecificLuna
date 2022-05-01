@@ -16,7 +16,7 @@ SYNOPSIS
 
 DESCRIPTION
 	Preprocesses LuNA program. Preprocessing comprises the following
-	stages:
+	main_branch:
 	    *) Extraction of foreign blocks, comments and strings
 	    *) Definitions substitutions
 
