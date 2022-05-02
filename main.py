@@ -3,10 +3,12 @@ import config
 import enviroment
 from branch import Branch,TreeBuilder
 from main_branch import stages as main_branch
+import executor as ex
+from logger import init_logger
 
 # Press Shift+F10 to execute it or replace it with your code.
 # Press Double Shift to search everywhere for classes, files, tool windows, actions, and settin
-cfg = config.LunaConfig()
+cfg = config.LunaConfig().GetConfig()
 
 def get_root():
     main = Branch(
@@ -26,13 +28,17 @@ def get_root():
     )
 
     builder = TreeBuilder(main)
-    root = builder.build()
+    return builder.build()
 
+
+def execute(root):
+    executor = ex.Executor()
+    executor.Run(root)
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     root = get_root()
-    print(root)
+    execute(root)
 
 
 # See PyCharm help at https://www.jetbrains.com/help/pycharm/

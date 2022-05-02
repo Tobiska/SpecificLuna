@@ -23,6 +23,7 @@ class TreeBuildException(Exception):
         self.message = message
         super().__init__(self.message)
 
+
 class ParentBranchException(TreeBuildException):
     """Exception raised for errors build tree"""
     def __init__(self, branch, stage, message="Relation problem"):
@@ -33,6 +34,7 @@ class ParentBranchException(TreeBuildException):
     def __str__(self):
         return f'branch: {self.branch.tag} has no stage with name: {self.stage.name}'
 
+
 class InitialBranchException(TreeBuildException):
     """Exception raised for errors build tree"""
     def __init__(self, branch, stage, message="Relation problem"):
@@ -40,6 +42,7 @@ class InitialBranchException(TreeBuildException):
         self.stage = stage
         self.branch = branch
         super().__init__(self.message)
+
     def __str__(self):
         return f'initial branch: {self.branch.tag} has no stage with name: {self.stage.name}'
 
@@ -52,15 +55,10 @@ class TreeBuilder:
         rels = dict()
         for branch in self.branches:
             rels[branch.parent_branch] = branch
-            if branch.parent_stage not in branch.parent_branch.stages:
-                raise ParentBranchException(
-                    branch=branch.parent_branch,
-                    stage=branch.parent_stage
-                )
         return rels
 
     def _add_stages(self, branch):
-        current_stage = branch.parent
+        current_stage = branch.parent_stage
         for stage in branch.stages:
             stage.set_meta(
                 meta=Meta(
@@ -69,7 +67,8 @@ class TreeBuilder:
                     environment=branch.environment,
                 )
             )
-            current_stage.add_command(stage=stage)
+            if current_stage is not None:
+                current_stage.add_command(stage=stage)
             current_stage=stage
 
     def _find_circles(self, rels):
@@ -80,14 +79,14 @@ class TreeBuilder:
         for branch in self.branches:
             if branch.parent_branch == None:
                 root = branch.stages[0]
-            self.add_stages(branch)
+            self._add_stages(branch)
         return root
 
     def _find_initial_branch(self) -> Branch:
         global initial_branch
         found_branch_without_parent = 0
         for branch in self.branches:
-            if branch.parent == None:
+            if branch.parent_stage == None:
                 found_branch_without_parent += 1
                 initial_branch = branch
         if found_branch_without_parent > 1:
@@ -97,10 +96,10 @@ class TreeBuilder:
         return initial_branch
 
     def build(self) -> Stage:
-        init_branch = self.find_initial_branch()
-        relations = self.collect_relationships()
-        self.find_circles(relations)
-        root_stage = self.make_tree()
+        init_branch = self._find_initial_branch()
+        relations = self._collect_relationships()
+        self._find_circles(relations)
+        root_stage = self._make_tree()
         if init_branch.stages[0] != root_stage:
             raise InitialBranchException(stage=root, branch=init_branch)
 

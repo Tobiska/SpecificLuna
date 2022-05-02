@@ -18,16 +18,22 @@ environments = {
 
 
 class Status:
-    def __init__(self, message, return_code):
+    def __init__(self, message=None, error=None, return_code=0):
         self.message = message
+        self.error = error
         self.return_code = return_code
 
     def is_success(self) -> bool:
         return True if self.return_code == 0 else False
 
     def __str__(self):
-        return f'Status command finished with code: {self.return_code}\n' \
-               f'Message: {self.message}'
+        if self.return_code != 0:
+            return f'Status command finished with code: {self.return_code}\n' \
+                   f'Error: {self.error}' \
+                   f'Message: {self.message}'
+        else:
+            return f'Status command finished with code: {self.return_code}\n' \
+                   f'Message: {self.message}'
 
 
 class Environment(ABC):
@@ -39,11 +45,11 @@ class Environment(ABC):
     def check(self, requirement) -> Status:
         pass
 
-    def collect_status(self, process) -> Status:
-        message = reduce(lambda m, ln: m + ln, process.stdout)
+    def collect_status(self, err, message, returncode) -> Status:
         return Status(
             message=message,
-            return_code=process.returncode,
+            error=err,
+            return_code=returncode,
         )
 
 
@@ -54,21 +60,33 @@ class LocalEnvironment(Environment):
         self.password = local["password"]
 
     def check(self, requirement) -> Status:
-        if os.path.isfile(requirement):
+        if os.path.exists(str(requirement)):
             status = Status(return_code=0, message="Success")
         else:
             status = Status(return_code=1, message=f"Requirement {requirement} is absent")
         return status
 
     def execute_command(self, cmd) -> Status:
-        process = subprocess.Popen(f'su {self.user} -c {cmd}',
-                                       stdin=subprocess.PIPE,
-                                       stdout=subprocess.PIPE,
-                                       universal_newlines=True,
-                                       bufsize=0
-                                       )
-        process.stdin.write(self.password)
-        return super().collect_status(process=process)
+        if type(cmd.bash_command) is str:
+            shell_flag = True
+        else:
+            shell_flag = False
+
+        process = subprocess.run(cmd.bash_command,
+                                 stderr=subprocess.PIPE,
+                                 stdout=subprocess.PIPE,
+                                 shell=shell_flag,
+                                 encoding='utf-8',
+                                 input=cmd.input,
+                                 env=cmd.environment,
+                                 )
+        if cmd.output_type is cmd.FILE:
+            open(cmd.output_file,
+                     'w').write(process.stdout)
+        elif cmd.output_type is cmd.STDOUT:
+            print(process.stdout)
+        return super().collect_status(message=process.stdout, err=process.stderr,
+                                      returncode=process.returncode)
 
 
 class RemoteSshEnvironment(Environment):
@@ -85,11 +103,9 @@ class RemoteSshEnvironment(Environment):
                                        stdout=subprocess.PIPE,
                                        universal_newlines=True,
                                        bufsize=0
-                                      )
+                                       )
         ssh_process.stdin.write(self.password)
         ssh_process.stdin.write(cmd)
         ssh_process.stdin.close()
 
         return super().collect_status(process=ssh_process)
-
-

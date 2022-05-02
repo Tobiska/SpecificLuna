@@ -1,32 +1,30 @@
-from env_config import Config, parse_int, parse_bool, parse_str
+import os
+
+import configargparse
 
 
 class LunaConfig:
     def __new__(cls):
         if not hasattr(cls, 'instance'):
             cls.instance = super(LunaConfig, cls).__new__(cls)
-
         return cls.instance
 
     def __init__(self):
-        self.cfg = Config()
-        self.cfg.declare("LUNA_HOME", parse_str()) #also set from std args
-        self.cfg.declare("PYTHON", parse_str())
-        self.cfg.declare("CXX_FLAGS", parse_str())
-        self.cfg.declare("CXX", parse_str())
-        self.cfg.declare("LDFLAGS", parse_str())
-        self.cfg.declare("PROGRAM", parse_str())
-        self.cfg.declare("LUNA_NO_CLEANUP", parse_bool())
-        self.cfg.declare("DEBUG", parse_bool())
+        self.parser = configargparse.ArgParser()
+        self.parser.add_argument("-lh", "--luna-home", required=True, help="Luna home path", env_var="LUNA_HOME") #also set from std args
+        self.parser.add_argument('--python', required=True, env_var="PYTHON")
+        self.parser.add_argument('--cxx_flags', required=True, env_var="CXX_FLAGS")
+        self.parser.add_argument('--cxx', required=True, env_var="CXX")
+        self.parser.add_argument('--ldflags', required=True, env_var="LDFLAGS")
+        self.parser.add_argument('--debug', required=True, env_var="DEBUG", default=False)
+        self.parser.add_argument('program')
+        self.parser.add_argument('argv', nargs='*')
+        self.parser.add_argument('--log_level', env_var="LOG_LEVEL", default="ERROR")
+        self.parser.add_argument('--log_filename', env_var="LOG_FILENAME", default="build.log")
+        self.parser.add_argument('--ld_library_path', env_var='LD_LIBRARY_PATH', default="")
+        self.parser.add_argument('-g', env_var="DEBUG", default=False)
+        self.parser.add_argument("--build-dir", env_var="BUILD_DIR", default=os.getcwd()) #also set from std args
+        self.cfg = self.parser.parse_args()
 
-        self.cfg.declare("CLEANUP", parse_bool()) #also set from std args
-        self.cfg.declare("TIME", parse_bool())
-        self.cfg.declare("BALANCE", parse_str())
-
-        self.cfg.declare("BUILD_DIR", parse_str()) #also set from std args
-
-        self.cfg.apply_log_levels() #LOG_LEVEL, LOG_LEVEL, LOG_LEVEL_PARAMIKO.TRANSPORT
-
-    def get(self, key):
-        return self.cfg.get(key)
-
+    def GetConfig(self):
+        return self.cfg

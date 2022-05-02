@@ -9,10 +9,21 @@ from enviroment import *
     некоторой мета информацией о спецификации реализующего алгоритма.
 """
 
-
 class Command:
-    def __init__(self, bash_command):
+
+    STDOUT = 1
+    NONE = 0
+    FILE = 2
+
+    def __init__(self, bash_command, input=None, output_type=None, output_file=None, environment=None):
         self.bash_command = bash_command
+        self.input=input
+        self.output_type=output_type
+        if (self.output_type != self.FILE) and (output_file is not None):
+            raise Exception("output_type must be FILE, output_file be not NONE")
+
+        self.output_file = output_file
+        self.environment = environment
 
 
 class Requirement:
@@ -60,13 +71,15 @@ class Stage(ABC):
     def set_meta(self, meta):
         self.meta = meta
 
-    def add_command(self, stage, priority):
+    def add_command(self, stage, priority=None):
+        if priority is None:
+            priority = self.next_stages.qsize() + 1
         self.next_stages.put((priority, stage))
 
     def next(self):
        job = self.next_stages.get()
        self.next_stages.task_done()
-       return job
+       return job[1]
 
     def reset(self):
         return self.parent

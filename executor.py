@@ -1,13 +1,10 @@
 import subprocess
 from abc import ABC, abstractmethod
 from enviroment import Status
+import logger as log
 import stage
-import os
 
-"""
-    Executor - класс, который берёт всю известную информацию о этапе и выполняет
-    в нужном окружении
-"""
+logger = log.init_logger("DEBUG", "build.log")
 
 class ReaderWriter(ABC):
     @abstractmethod
@@ -20,14 +17,14 @@ class ReaderWriter(ABC):
 
 
 class Executor:
-    def Exec(self, stage:stage.Stage) -> Status:
+    def _exec(self, stage:stage.Stage) -> Status:
         env = stage.get_environment()
-        status = self.validate_requirements(stage.get_requirements(), env)
+        status = self._validate_requirements(stage.get_requirements(), env)
         if not status.is_success():
             return status
-        return env.execute_command(stage.get_command().bash_command)
+        return env.execute_command(stage.get_command())
 
-    def validate_requirements(self, requirements:[stage.Requirement], environment) -> Status:
+    def _validate_requirements(self, requirements:[stage.Requirement], environment) -> Status:
         for requirement in requirements:
             status = environment.check(requirement)
             if not status.is_success():
@@ -39,10 +36,13 @@ class Executor:
 
     def Run(self, root:stage.Stage):
         self.current_stage = root
-        for stage in self.current_stage.next():
-            status = self.Exec(stage)
-            if status == 0:
-                self.current_stage = stage
+        while True:
+            if self.current_stage is None:
+                break
+            status = self._exec(self.current_stage)
+            if status.is_success():
+                logger.info(f"{type(self.current_stage).__name__} is done")
+                self.current_stage = self.current_stage.next()
             else:
-                self.current_stage = stage.reset_branch()
-        return
+                logger.error(f"{type(self.current_stage).__name__} {status}")
+                self.current_stage = self.current_stage.reset_branch()

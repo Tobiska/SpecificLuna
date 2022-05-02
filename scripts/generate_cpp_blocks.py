@@ -84,12 +84,13 @@ def generate_cpp_blocks(ja_in_path, headers_in_path, ja_ti_path, b_in_path,
 
 
 if __name__ == '__main__':
+    print(sys.argv)
     generate_cpp_blocks(
-        sys.argv[0],
         sys.argv[1],
         sys.argv[2],
         sys.argv[3],
         sys.argv[4],
         sys.argv[5],
-        sys.argv[6]
+        sys.argv[6],
+        sys.argv[7]
     )

@@ -137,7 +137,7 @@ def parse_args(args):
 	while cur<len(args):
 		arg=args[cur]
 		
-		if arg.startswith('--build-dir='):
+		if arg.startswith('--build-dir=--build-dir='):
 			conf['BUILD_DIR']=arg.split('=', 1)[1]
 		elif arg.startswith('--luna-home='):
 			conf['LUNA_HOME']=arg.split('=', 1)[1]
