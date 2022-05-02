@@ -74,7 +74,7 @@ class Stage(ABC):
     def add_command(self, stage, priority=None):
         if priority is None:
             priority = self.next_stages.qsize() + 1
-        self.next_stages.put((priority, stage))
+        self.next_stages.put((-priority, stage))
 
     def next(self):
        job = self.next_stages.get()
