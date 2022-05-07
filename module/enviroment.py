@@ -1,5 +1,6 @@
 import os.path
 import subprocess
+import time
 from abc import ABC, abstractmethod
 from functools import reduce
 
@@ -18,22 +19,23 @@ environments = {
 
 
 class Status:
-    def __init__(self, message=None, error=None, return_code=0):
+    def __init__(self, execution_time=0, message=None, error=None, return_code=0):
         self.message = message
         self.error = error
         self.return_code = return_code
+        self.execution_time = execution_time
 
     def is_success(self) -> bool:
         return True if self.return_code == 0 else False
 
     def __str__(self):
         if self.return_code != 0:
-            return f'Status command finished with code: {self.return_code}\n' \
-                   f'Error: {self.error}' \
-                   f'Message: {self.message}'
+            return f"Status command finished with code: {self.return_code}\n" \
+                   f"Error: {self.error}\n" \
+                   f"Message: {self.message}\n" \
+                   f"Time: {self.execution_time}\n"
         else:
-            return f'Status command finished with code: {self.return_code}\n' \
-                   f'Message: {self.message}'
+            return f"Time: {self.execution_time}"
 
 
 class Environment(ABC):
@@ -45,11 +47,16 @@ class Environment(ABC):
     def check(self, requirement) -> Status:
         pass
 
-    def collect_status(self, err, message, returncode) -> Status:
+    @abstractmethod
+    def cleanup(self, paths):
+        pass
+
+    def collect_status(self, err, message, returncode, execution_time) -> Status:
         return Status(
             message=message,
             error=err,
             return_code=returncode,
+            execution_time=execution_time
         )
 
 
@@ -66,12 +73,23 @@ class LocalEnvironment(Environment):
             status = Status(return_code=1, message=f"Requirement {requirement} is absent")
         return status
 
+    def cleanup(self, paths):
+        for path in paths:
+            if os.path.exists(str(path)):
+                os.remove(str(path))
+
+    def format_print_result(self, out):
+        print(f"-----------------------------------------------------------------\n"
+              f"{out}"
+              f"-----------------------------------------------------------------\n")
+
     def execute_command(self, cmd) -> Status:
         if type(cmd.bash_command) is str:
             shell_flag = True
         else:
             shell_flag = False
 
+        start_time = time.perf_counter()
         process = subprocess.run(cmd.bash_command,
                                  stderr=subprocess.PIPE,
                                  stdout=subprocess.PIPE,
@@ -80,13 +98,16 @@ class LocalEnvironment(Environment):
                                  input=cmd.input,
                                  env=cmd.environment,
                                  )
+        end_time = time.perf_counter()
         if cmd.output_type is cmd.FILE:
             open(cmd.output_file,
                      'w').write(process.stdout)
         elif cmd.output_type is cmd.STDOUT:
             print(process.stdout)
-        return super().collect_status(message=process.stdout, err=process.stderr,
-                                      returncode=process.returncode)
+        return super().collect_status(message=process.stdout,
+                                      err=process.stderr,
+                                      returncode=process.returncode,
+                                      execution_time=(end_time - start_time))
 
 
 class RemoteSshEnvironment(Environment):

@@ -1,14 +1,18 @@
 # This is a sample Python script.
-import config
-import enviroment
-from branch import Branch,TreeBuilder
+import os
+
+from module import enviroment, executor as ex
+from module.branch import Branch,TreeBuilder
 from main_branch import stages as main_branch
-import executor as ex
-from logger import init_logger
+from iclu_branch import stages as iclu_branch
+from dotenv import load_dotenv
+
+dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
+if os.path.exists(dotenv_path):
+    load_dotenv(dotenv_path)
 
 # Press Shift+F10 to execute it or replace it with your code.
 # Press Double Shift to search everywhere for classes, files, tool windows, actions, and settin
-cfg = config.LunaConfig().GetConfig()
 
 def get_root():
     main = Branch(
@@ -24,10 +28,21 @@ def get_root():
            main_branch.BuildLibUcodes(),
            main_branch.RunRTS(),
         ],
-        enviroment=enviroment.LocalEnvironment('local')
+        environment=enviroment.LocalEnvironment('local')
     )
 
-    builder = TreeBuilder(main)
+    iclu = Branch(
+        tag='luic',
+        stages=[
+            iclu_branch.Preprocessor(),
+            iclu_branch.Parser(),
+            iclu_branch.Compiler(),
+            #Runner
+        ],
+        environment= enviroment.LocalEnvironment('local')
+    )
+
+    builder = TreeBuilder(main, iclu)
     return builder.build()
 
 

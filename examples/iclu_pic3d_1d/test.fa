@@ -1,0 +1,214 @@
+import c_copy_int2int(#in int #value, #out name #dest) as copy_int2int;
+import c_copy_value2int(#in value #sour, #out name #dest) as copy_value2int;
+import c_copy_value2real(#in value #sour, #out name #dest) as copy_value2real;
+import c_copy_block2block(#in value #sour, #out name #dest) as copy_block2block;
+
+import c_print_valueint(#in value #val) as print_valueint;
+import c_print_int(#in int #val) as print_int;
+import c_print_poisson0(#in value #count) as print_poisson0;
+import c_print_poisson(#in int #iteration,value #count) as print_poisson;
+
+import c_init_parameters(#in int #nfx,int #nfy,int #nfz, #out name #params) as init_parameters;
+import c_get_nfx(#in value #params, #out name #nfx) as get_nfx;
+import c_get_nfy(#in value #params, #out name #nfy) as get_nfy;
+import c_get_nfz(#in value #params, #out name #nfz) as get_nfz;
+import c_get_nt(#in value #params, #out name #nt) as get_nt;
+import c_get_eps(#in value #params, #out name #eps) as get_eps;
+
+import c_real1d_reduce_max(#in value #x, #out name #result) as real1d_reduce_max;
+import c_init_particles_coordinates_subdomain(#in value #params,int #ifx,int #ify,int #ifz, #out name #pxyz) as init_particles_coordinates_subdomain;
+import c_init_particles_velocity_subdomain(#in value #params,int #ifx,int #ify,int #ifz,value #fx,value #fy,value #fz,value #fi,value #fimax,value #pxyz, #out name #p) as init_particles_velocity_subdomain;
+import c_compute_density_subdomain(#in value #params,int #ifx,int #ify,int #ifz,value #p, #out name #ro) as compute_density_subdomain;
+import c_poisson3d_init_subdomain(#in value #params,int #ifx,int #ify,int #ifz, #out name #fp) as poisson3d_init_subdomain;
+import c_poisson3d_step_subdomain(#in value #params,int #ifx,int #ify,int #ifz,value #ro,value #fp, #out name #fp_new,name #stopflag) as poisson3d_step_subdomain;
+import c_compute_fi_dobavka(#in value #params,int #ifx,int #ify,int #ifz,value #fpi, #out name #fi) as compute_fi_dobavka;
+import c_compute_forces_subdomain(#in value #params,int #ifx,int #ify,int #ifz,value #fi, #out name #fx,name #fy,name #fz) as compute_forces_subdomain;
+import c_move_particles_subdomain(#in value #params,int #ifx,int #ify,int #ifz,value #p,value #fx,value #fy,value #fz, #out name #pnew) as move_particles_subdomain;
+import c_compute_properties_subdomain(#in value #params,int #ifx,int #ify,int #ifz,value #fi,value #p, #out name #props) as compute_properties_subdomain;
+import c_compute_properties_finish(#in value #params,value #props, #out name #props_result) as compute_properties_finish;
+import c_print_properties(#in value #params,int #it,value #props,string #filename) as print_properties;
+
+import c_p_borders_get_x(#in value #params,int #ifx,int #ify,int #ifz,value #p, #out name #b011,name #b211) as p_borders_get_x;
+import c_p_borders_get_xy(#in value #params,int #ifx,int #ify,int #ifz,value #p, #out name #b001,name #b011,name #b021,name #b101,name #b121,name #b201,name #b211,name #b221) as p_borders_get_xy;
+import c_p_borders_get_xyz(#in value #params,int #ifx,int #ify,int #ifz,value #p,
+  #out name #b000,name #b001,name #b002,name #b010,name #b011,name #b012,name #b020,name #b021,name #b022,
+  #out name #b100,name #b101,name #b102,name #b110,           name #b112,name #b120,name #b121,name #b122,
+  #out name #b200,name #b201,name #b202,name #b210,name #b211,name #b212,name #b220,name #b221,name #b222) as p_borders_get_xyz;
+import c_p_borders_set_x(#in value #params,int #ifx,int #ify,int #ifz,value #b011,value #b111,value #b211, #out name #p_new) as p_borders_set_x;
+import c_p_borders_set_xy(#in value #params,int #ifx,int #ify,int #ifz,
+                              value #b001,value #b011,value #b021, value #b101,value #b111,value #b211, value #b121,value #b201,value #b211,value #b221,
+                          #out name #p) as p_borders_set_xy;
+import c_p_borders_set_xyz(#in value #params,int #ifx,int #ify,int #ifz,
+      value #b000,value #b001,value #b002, value #b010,value #b011,value #b012,value #b020,value #b021,value #b022,
+      value #b100,value #b101,value #b102, value #b110,value #b111,value #b112,value #b120,value #b121,value #b122,
+      value #b200,value #b201,value #b202, value #b210,value #b211,value #b212,value #b220,value #b221,value #b222,
+                           #out name #p) as p_borders_set_xy;
+
+import c_ro_borders_get_x(#in value #params,int #ifx,int #ify,int #ifz,value #u, #out name #b011,name #b211) as ro_borders_get_x;
+import c_ro_borders_set_x(#in value #params,int #ifx,int #ify,int #ifz,value #u,value #b011,value #b211, #out name #v) as ro_borders_set_x;
+import c_ro_borders_get_xy(#in value #params,int #ifx,int #ify,int #ifz,value #u,
+  #out name #b001,name #b011,name #b021,name #b101,name #b121,name #b201,name #b211,name #b221) as ro_borders_get_xy;
+import c_ro_borders_set_xy(#in value #params,int #ifx,int #ify,int #ifz,value #u,
+       value #b001,value #b011,value #b021,value #b101,value #b121,value #b201,value #b211,value #b221,
+                          #out name #v) as ro_borders_set_xy;
+import c_ro_borders_get_xyz(#in value #params,int #ifx,int #ify,int #ifz,value #u,
+  #out name #b000,name #b001,name #b002,name #b010,name #b011,name #b012,name #b020,name #b021,name #b022,
+       name #b100,name #b101,name #b102,name #b110,           name #b112,name #b120,name #b121,name #b122,
+       name #b200,name #b201,name #b202,name #b210,name #b211,name #b212,name #b220,name #b221,name #b222) as fi_borders_get_xyz;
+import c_ro_borders_set_xyz(#in value #params,int #ifx,int #ify,int #ifz,value #u,
+       value #b000,value #b001,value #b002,value #b010,value #b011,value #b012,value #b020,value #b021,value #b022,
+       value #b100,value #b101,value #b102,value #b110,            value #b112,value #b120,value #b121,value #b122,
+       value #b200,value #b201,value #b202,value #b210,value #b211,value #b212,value #b220,value #b221,value #b222,
+                            #out name #v) as ro_borders_set_xyz;
+
+import c_fi_borders_get_x(#in value #params,int #ifx,int #ify,int #ifz,value #u, #out name #b011,name #b211) as fi_borders_get_x;
+import c_fi_borders_set_x(#in value #params,int #ifx,int #ify,int #ifz,value #u,value #b011,value #b211, #out name #v) as fi_borders_set_x;
+import c_fi_borders_get_xy(#in value #params,int #ifx,int #ify,int #ifz,value #u,
+  #out name #b001,name #b011,name #b021,name #b101,name #b121,name #b201,name #b211,name #b221) as fi_borders_get_xy;
+import c_fi_borders_set_xy(#in value #params,int #ifx,int #ify,int #ifz,value #u,
+       value #b001,value #b011,value #b021,value #b101,value #b121,value #b201,value #b211,value #b221,
+  #out name #v) as fi_borders_set_xy;
+import c_fi_borders_get_xyz(#in value #params,int #ifx,int #ify,int #ifz,value #u,
+  #out name #b000,name #b001,name #b002,name #b010,name #b011,name #b012,name #b020,name #b021,name #b022,
+       name #b100,name #b101,name #b102,name #b110,           name #b112,name #b120,name #b121,name #b122,
+       name #b200,name #b201,name #b202,name #b210,name #b211,name #b212,name #b220,name #b221,name #b222) as fi_borders_get_xyz;
+import c_fi_borders_set_xyz(#in value #params,int #ifx,int #ify,int #ifz,value #u,
+       value #b000,value #b001,value #b002,value #b010,value #b011,value #b012,value #b020,value #b021,value #b022,
+       value #b100,value #b101,value #b102,value #b110,            value #b112,value #b120,value #b121,value #b122,
+       value #b200,value #b201,value #b202,value #b210,value #b211,value #b212,value #b220,value #b221,value #b222,
+  #out name #v) as fi_borders_set_xyz;
+
+import c_print_mesh_fragment(#in value #params,int #ifx,int #ify,int #ifz,value #u,int #label) as print_mesh_fragment;
+
+sub main()
+{
+  df params,nfx,nt,eps,poisson0_iter,stopflag0(2),props0sum,props0,fimax,iter;
+
+  DFArray px[nfx],p[nfx],
+          ro0nb[nfx],ro0[nfx],
+          fp0[nfx],fi0[nfx],fp[nfx],fimaxi[nfx],
+          fx[nfx],fy[nfx],fz[nfx],
+          prop0[nfx];
+
+  init_parameters(#in 16,1,1, #out params);
+  get_nfx(#in params, #out nfx);
+  get_nt(#in params, #out nt);
+  get_eps(#in params, #out eps);
+
+  for i=0..nfx-1
+    init_particles_coordinates_subdomain(#in params,i,0,0, #out px[i]);
+
+  //compute_density(#in px[], #out ro0[]);
+  for i=0..nfx-1
+    compute_density_subdomain(#in params,i,0,0,px[i], #out ro0nb[i]);
+  <borders_exchange 1>(#in ro0nb, #out ro0,
+                       #code ro_borders_get_x(#in params,%FRAG_IDX,0,0,%in, #out %1,%2),
+                             ro_borders_set_x(#in params,%FRAG_IDX,0,0,%in,%1,%2, #out %out));
+
+  //poisson3d_solve_explicit(#in ro0, #out fp0);
+  for i=0..nfx-1
+    poisson3d_init_subdomain(#in params,i,0,0, #out fp0(0)[i]);
+
+  //for i=0..nfx-1 print_mesh_fragment(#in params,i,0,0,fp0(0)[i],0);
+  //for i=0..nfx-1 print_mesh_fragment(#in params,i,0,0,ro0[i],1);
+
+  copy_int2int(#in 0, #out stopflag0(0));
+  while(stopflag0(cnt0) == 0), cnt0 = 0..out poisson0_iter : <fp0(cnt0) --> fp0(cnt0+1)>
+  {
+    DFArray fp0nb[nfx],sf[nfx];
+    //print_int(#in cnt0);
+    for i=0..nfx-1
+      poisson3d_step_subdomain(#in params,i,0,0,ro0[i],fp0(cnt0)[i], #out fp0nb[i],sf[i]);
+    <borders_exchange 1>(#in fp0nb, #out fp0(cnt0+1),
+                         #code fi_borders_get_x(#in params,%FRAG_IDX,0,0,%in, #out %1,%2),
+                               fi_borders_set_x(#in params,%FRAG_IDX,0,0,%in,%1,%2, #out %out));
+    <reduce min>(#in sf, #out stopflag0(cnt0+1), #type int, #code copy_value2int(#in %in,#out %out));
+  }
+
+  print_poisson0(#in poisson0_iter);
+
+  for i=0..nfx-1
+    copy_block2block(#in fp0(poisson0_iter)[i], #out fp(0)[i]);
+
+  //compute_fi_dobavka(#in fp0, #out fi0);
+  for i=0..nfx-1
+    compute_fi_dobavka(#in params,i,0,0,fp(0)[i], #out fi0[i]);
+
+  //compute_fi_max(#in fi, #out fimax);
+  for i=0..nfx-1
+    real1d_reduce_max(#in fi0[i], #out fimaxi[i]);
+  <reduce +>(#in fimaxi, #out fimax, #type real, #code copy_value2real(#in %in, #out %out));
+
+  //compute_forces(#in fi0, #out fx(0),fy(0),fz(0));
+  for i=0..nfx-1
+    compute_forces_subdomain(#in params,i,0,0,fi0[i], #out fx(0)[i],fy(0)[i],fz(0)[i]);
+
+  //init_particles_velocity(#in params,px, #out p(0));
+  for i=0..nfx-1
+    init_particles_velocity_subdomain(#in params,i,0,0,fx(0)[i],fy(0)[i],fz(0)[i],fi0[i],fimax,px[i], #out p(0)[i]);
+
+  //compute_properties(#in params,fi0,p(0)[i]);
+  //for i=0..nfx-1
+  //  compute_properties_subdomain(#in params,i,0,0,fi0[i],p(0)[i], #out prop0[i]);
+  //<reduce +>(#in prop0, #out props0sum, #type real, #code reduce_props(#in %in, #out %out));
+  //compute_properties_finish(#in params,props0sum, #out props0);
+  //print_properties(#i params,0,props0,"log.txt");
+
+  //time loop
+  while(it<nt), it=0..out iter : <p(it) --> p(it+1)>, <fp(it) --> fp(it+1)>, <fx(it) --> fx(it+1)>, <fy(it) --> fy(it+1)>, <fz(it) --> fz(it+1)>
+  {
+    df poisson_iter,stopflag(2),props_sum,props;
+    DFArray pnb[nfx],ronb[nfx],ro[nfx],fpit[nfx],fi[nfx],prop[nfx];
+
+    //move_particles(#in p(it),fx(it),fy(it),fz(it), #out p(it+1));
+    for i=0..nfx-1
+      move_particles_subdomain(#in params,i,0,0,p(it)[i],fx(it)[i],fy(it)[i],fz(it)[i], #out pnb[i]);
+    <borders_exchange 1>(#in pnb, #out p(it+1),
+                       #code p_borders_get_x(#in params,%FRAG_IDX,0,0,%in, #out %1,%2),
+                             p_borders_set_x(#in params,%FRAG_IDX,0,0,%in,%1,%2, #out %out));
+
+    //compute_density(#in p(it+1), #out ro);
+    for i=0..nfx-1
+      compute_density_subdomain(#in params,i,0,0,p(it+1)[i], #out ronb[i]);
+    <borders_exchange 1>(#in ronb, #out ro,
+                         #code ro_borders_get_x(#in params,%FRAG_IDX,0,0,%in, #out %1,%2),
+                               ro_borders_set_x(#in params,%FRAG_IDX,0,0,%in,%1,%2, #out %out));
+
+    //poisson3d_solve_explicit(#in ro,fp(it) #out fi,fp(it+1));
+    for i=0..nfx-1
+      copy_block2block(#in fp(it)[i], #out fpit(0)[i]);
+    copy_int2int(#in 0, #out stopflag(0));
+    while(stopflag(cnt) == 0), cnt = 0..out poisson_iter : <fpit(cnt) --> fpit(cnt+1)>
+    {
+      DFArray fpitnb[nfx],sf[nfx];
+      //print_int(#in cnt);
+      for i=0..nfx-1
+        poisson3d_step_subdomain(#in params,i,0,0,ro[i],fpit(cnt)[i], #out fpitnb[i],sf[i]);
+      <borders_exchange 1>(#in fpitnb, #out fpit(cnt+1),
+                           #code fi_borders_get_x(#in params,%FRAG_IDX,0,0,%in, #out %1,%2),
+                                 fi_borders_set_x(#in params,%FRAG_IDX,0,0,%in,%1,%2, #out %out));
+      <reduce min>(#in sf, #out stopflag(cnt+1), #type int, #code copy_value2int(#in %in, #out %out));
+    }
+
+    print_poisson(#in it,poisson_iter);
+
+    for i=0..nfx-1
+      copy_block2block(#in fpit(poisson_iter)[i], #out fp(it+1)[i]);
+
+    //compute_fi_dobavka(#in fp(it+1), #out fi);
+    for i=0..nfx-1
+      compute_fi_dobavka(#in params,i,0,0,fp(it+1)[i], #out fi[i]);
+
+    //compute_forces(#in fi, #out fx(it+1),fy(it+1),fz(it+1));
+    for i=0..nfx-1
+      compute_forces_subdomain(#in params,i,0,0,fi[i], #out fx(it+1)[i],fy(it+1)[i],fz(it+1)[i]);
+
+    //compute_properties(#in params,fi,p);
+    //for i=0..nfx-1
+    //  compute_properties_subdomain(#in params,i,0,0,fi[i],p(it+1)[i], #out prop[i]);
+    //<reduce +>(#in prop, #out props_sum, #type real, #code reduce_props(#in %in, #out %out));
+    //compute_properties_finish(#in params,props_sum, #out props);
+    //print_properties(#in params,it,props,"log.txt");
+  }
+
+}

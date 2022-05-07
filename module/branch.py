@@ -1,13 +1,19 @@
-from stage import Stage, Meta
+from module.stage import Stage, Meta, RootStage, Result
 
 
 class Branch:
-    def __init__(self, tag, stages=None, parent_stage=None, parent_branch=None, enviroment=None):
+    def __init__(self, tag, stages=None, parent_stage=RootStage(), parent_branch=None, environment=None):
         self.parent_stage = parent_stage
         self.parent_branch = parent_branch
         self.stages = stages
         self.tag = tag
-        self.environment = enviroment
+        self.environment = environment
+
+    def __getattr__(self, item):
+        for stage in self.stages:
+            if item == type(stage).__name__:
+                return stage
+        return None
 
     def set_stages(self, stages):
         self.stages = stages
@@ -15,6 +21,13 @@ class Branch:
     def set_parent(self, parent_stage, parent_branch):
         self.parent_stage = parent_stage
         self.parent_branch = parent_branch
+
+    def get_results_stages(self) -> [Result]:
+        acc = []
+        for item in self.stages:
+            acc += item.get_results()
+        return acc
+
 
 
 class TreeBuildException(Exception):
@@ -64,6 +77,7 @@ class TreeBuilder:
                 meta=Meta(
                     tag=branch.tag,
                     parent=branch.parent_stage,
+                    cleanup_results=branch.get_results_stages(),
                     environment=branch.environment,
                 )
             )
@@ -75,18 +89,15 @@ class TreeBuilder:
         pass
 
     def _make_tree(self) -> Stage:
-        global root
         for branch in self.branches:
-            if branch.parent_branch == None:
-                root = branch.stages[0]
             self._add_stages(branch)
-        return root
+        return RootStage()
 
     def _find_initial_branch(self) -> Branch:
         global initial_branch
         found_branch_without_parent = 0
         for branch in self.branches:
-            if branch.parent_stage == None:
+            if branch.parent_stage is RootStage():
                 found_branch_without_parent += 1
                 initial_branch = branch
         if found_branch_without_parent > 1:
@@ -96,13 +107,9 @@ class TreeBuilder:
         return initial_branch
 
     def build(self) -> Stage:
-        init_branch = self._find_initial_branch()
         relations = self._collect_relationships()
         self._find_circles(relations)
         root_stage = self._make_tree()
-        if init_branch.stages[0] != root_stage:
-            raise InitialBranchException(stage=root, branch=init_branch)
-
         return root_stage
 
 

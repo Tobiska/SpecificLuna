@@ -1,24 +1,24 @@
 import os
 
-import stage
-from stage import Command, Requirement
-from main import cfg
-
+from module import stage
+from module.stage import Command, Requirement, Result
+from module.config import cfg
 
 class BuildLibUcodes(stage.Stage):
     def __init__(self):
         super().__init__()
-        self.make = None
-        self.makefile = None
-
-    def get_requirements(self) -> [Requirement]:
-        #python3, pp.py, $PROGRAM
         self.make = Requirement(
             requirement=f'make'
         )
         self.makefile = Requirement(
             requirement=f'{cfg.build_dir}/Makefile.libucodes'
         )
+
+        self.lib_ucodes = Result(
+            result=f'{cfg.build_dir}/libucodes.so'
+        )
+
+    def get_requirements(self) -> [Requirement]:
         return [self.makefile]
 
     def get_command(self) -> Command:
@@ -26,6 +26,10 @@ class BuildLibUcodes(stage.Stage):
         return Command(
             bash_command=cmd
         )
+
+    def get_results(self) -> [Result]:
+        return [self.lib_ucodes]
+
 
 class GenerateBlocks(stage.Stage):
     def __init__(self):
@@ -48,20 +52,21 @@ class GenerateBlocks(stage.Stage):
         self.block_text_information = Requirement(
             requirement=f'{cfg.build_dir}/blocks.ti'
         )
-        self.program_foreign = Requirement(
-            requirement=f'{cfg.build_dir}/program_foreign.ja'
+        self.program_foreign = Result(
+            result=f'{cfg.build_dir}/program_foreign.ja'
         )
-        self.foreign_blocks = Requirement(
-            requirement=f'{cfg.build_dir}/foreign_blocks.cpp'
+        self.foreign_blocks = Result(
+            result=f'{cfg.build_dir}/foreign_blocks.cpp'
         )
-        self.foreign_blocks_text_information = Requirement(
-            requirement=f'{cfg.build_dir}/foreign_blocks.cpp.ti'
+        self.foreign_blocks_text_information = Result(
+            result=f'{cfg.build_dir}/foreign_blocks.cpp.ti'
         )
 
     def get_requirements(self) -> [Requirement]:
-        #python3, pp.py, $PROGRAM
         return [self.generator, self.program, self.preprocessed_text_information, self.block_text_information]
 
+    def get_results(self) -> [Result]:
+        return [self.program_foreign, self.foreign_blocks, self.foreign_blocks_text_information]
     def get_command(self) -> Command:
         cmd = f'{self.interpreter} {self.generator} {self.program} {self.headers} {self.preprocessed_text_information} {self.block_text_information} {self.program_foreign} {self.foreign_blocks} {self.foreign_blocks_text_information}'
         return Command(
@@ -84,11 +89,19 @@ class GenerateMakefile(stage.Stage):
             requirement=f'{cfg.cxx_flags}'
         )
 
+        self.makefile = Result(
+            result=f'{cfg.build_dir}/Makefile.libucodes'
+        )
+
+        self.ldflags = f"-ldl -L {cfg.luna_home}/lib  -lrts -shared -fPIC"
+
         self.program_dir = os.path.dirname(os.path.abspath(cfg.program))
 
     def get_requirements(self) -> [Requirement]:
-        #python3, pp.py, $PROGRAM
         return [self.mkgen]
+
+    def get_results(self) -> [Result]:
+        return [self.makefile]
 
     def get_command(self) -> Command:
         cmd = [f'{self.interpreter}',
@@ -98,7 +111,7 @@ class GenerateMakefile(stage.Stage):
                f'--compiler={self.cxx}',
                f'--obj={cfg.build_dir}',
                '--src-stdin',
-               f'--link-flags= {cfg.ldflags} -lrts -shared -fPIC']
+               f'--link-flags={self.ldflags}']
         cpp_list = [os.path.join(cfg.build_dir, f) for f in os.listdir(cfg.build_dir) if f.endswith('.cpp')]
         cpp_list += [os.path.join(self.program_dir, f) for f in os.listdir(self.program_dir) if f.endswith('.cpp')]
         return Command(
@@ -107,6 +120,7 @@ class GenerateMakefile(stage.Stage):
             output_type=Command.FILE,
             output_file = f'{cfg.build_dir}/Makefile.libucodes'
         )
+
 
 class GenerateCppBlocks(stage.Stage):
     def __init__(self):
@@ -117,25 +131,28 @@ class GenerateCppBlocks(stage.Stage):
         self.interpreter = Requirement(
             requirement=f'{cfg.python}'
         )
-        self.cpp_block_info = Requirement(
-            requirement=f'{cfg.build_dir}/cpp_blocks_info.json'
+        self.cpp_block_info = Result(
+            result=f'{cfg.build_dir}/cpp_blocks_info.json'
         )
-        self.cpp = Requirement(
-            requirement=f'{cfg.build_dir}/test.cpp'
+        self.cpp = Result(
+            result=f'{cfg.build_dir}/test.cpp'
         )
         self.recommendations = Requirement(
             requirement=f'{cfg.build_dir}/program_recom.ja'
         )
 
     def get_requirements(self) -> [Requirement]:
-        #python3, pp.py, $PROGRAM
         return [self.fcmp2, self.recommendations]
+
+    def get_results(self) -> [Result]:
+        return [self.cpp, self.cpp_block_info]
 
     def get_command(self) -> Command:
         cmd = f'{self.interpreter} {self.fcmp2} {self.recommendations} {self.cpp} {self.cpp_block_info}'
         return Command(
             bash_command=cmd
         )
+
 
 class GenerateRecoms(stage.Stage):
     def __init__(self):
@@ -149,13 +166,15 @@ class GenerateRecoms(stage.Stage):
         self.foreign = Requirement(
             requirement=f'{cfg.build_dir}/program_foreign.ja'
         )
-        self.recom = Requirement(
-            requirement=f'{cfg.build_dir}/program_recom.ja'
+        self.recom = Result(
+            result=f'{cfg.build_dir}/program_recom.ja'
         )
 
     def get_requirements(self) -> [Requirement]:
-        #python3, pp.py, $PROGRAM
         return [self.fcmp, self.foreign]
+
+    def get_results(self) -> [Result]:
+        return [self.recom]
 
     def get_command(self) -> Command:
         cmd = f'{self.interpreter} {self.fcmp} {self.foreign} {self.recom} --only-requests'
@@ -163,27 +182,37 @@ class GenerateRecoms(stage.Stage):
             bash_command=cmd
         )
 
+
 class Parser(stage.Stage):
     def __init__(self):
         super().__init__()
-        self.prepocessed = None
-        self.parser = None
-
-    def get_requirements(self) -> [Requirement]:
-        #python3, pp.py, $PROGRAM
         self.preprocessed = Requirement(
             requirement=f'{cfg.build_dir}/preprocessed.fa'
         )
         self.parser = Requirement(
             requirement=f'{cfg.luna_home}/bin/parser'
         )
+
+        self.headers = Result(
+            result=f'{cfg.build_dir}/headers.ja'
+        )
+
+        self.program = Result(
+            result=f'{cfg.build_dir}/program.ja'
+        )
+
+    def get_requirements(self) -> [Requirement]:
         return [self.preprocessed, self.parser]
 
+    def get_results(self) -> [Result]:
+        return [self.program, self.headers]
+
     def get_command(self) -> Command:
-        cmd = f'{self.parser} {self.preprocessed} -o {cfg.build_dir}/program.ja -h {cfg.build_dir}/headers.ja'
+        cmd = f'{self.parser} {self.preprocessed} -o {self.program} -h {self.headers}'
         return Command(
             bash_command=cmd
         )
+
 
 class Preprocessor(stage.Stage):
     def __init__(self):
@@ -199,12 +228,26 @@ class Preprocessor(stage.Stage):
             requirement=f'{cfg.python}'
         )
 
+        self.preprocessed = Result(
+            result=f'{cfg.build_dir}/preprocessed.fa'
+        )
+
+        self.preprocessed_text_info = Result(
+            result=f'{cfg.build_dir}/preprocessed.fa.ti'
+        )
+
+        self.blocks_text_info = Result(
+            result=f'{cfg.build_dir}/blocks.ti'
+        )
+
     def get_requirements(self) -> [Requirement]:
-        #python3, pp.py, $PROGR
         return [self.preprocessor, self.program]
 
+    def get_results(self) -> [Result]:
+        return [self.preprocessed, self.preprocessed_text_info, self.blocks_text_info]
+
     def get_command(self) -> Command:
-        cmd = f'{self.interpreter} {self.preprocessor} {self.program} -o {cfg.build_dir}/preprocessed.fa --text-info={cfg.build_dir}/preprocessed.fa.ti --blocks-path={cfg.build_dir}/blocks.ti'
+        cmd = f'{self.interpreter} {self.preprocessor} {self.program} -o {self.preprocessed} --text-info={self.preprocessed_text_info} --blocks-path={self.blocks_text_info}'
         return Command(
             bash_command=cmd
         )
@@ -231,8 +274,10 @@ class RunRTS(stage.Stage):
         self.ld_lib = f'{cfg.ld_library_path}:{cfg.luna_home}/lib'
 
     def get_requirements(self) -> [Requirement]:
-        #python3, pp.py, $PROGRAM
         return [self.rts, self.rts_debug, self.lib_ucodes]
+
+    def get_results(self) -> [Result]:
+        return []
 
     def get_command(self) -> Command:
         env = dict(os.environ)
@@ -261,6 +306,9 @@ class Substitution(stage.Stage):
     def get_requirements(self) -> [Requirement]:
         #python3, pp.py, $PROGRAM
         return [self.substitution, self.program]
+
+    def get_results(self) -> [Result]:
+        return []
 
     def get_command(self) -> Command:
         cmd = f'{self.interpreter} {self.substitution} {self.program}'
