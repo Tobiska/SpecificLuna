@@ -18,8 +18,7 @@ class Branch:
     def set_stages(self, stages):
         self.stages = stages
 
-    def set_parent(self, parent_stage, parent_branch):
-        self.parent_stage = parent_stage
+    def set_parent(self, parent_branch):
         self.parent_branch = parent_branch
 
     def get_results_stages(self) -> [Result]:

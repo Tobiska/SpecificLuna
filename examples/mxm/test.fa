@@ -1,0 +1,13 @@
+#!/usr/bin/luna
+/*
+ For and while operators ("loops").
+*/
+
+import c_init(int, name) as init;
+import c_show(string, int) as show;
+sub main() {
+
+	for i = 1 .. 2
+		for j=1..3
+			show("coord:", i*100+j);
+}

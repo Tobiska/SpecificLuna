@@ -1,5 +1,7 @@
 import queue
 import uuid
+from abc import ABC
+
 from module.enviroment import *
 
 """
@@ -96,23 +98,46 @@ class Stage(ABC):
     def reset_branch(self):
         return self.meta.parent
 
+
 class RootStageNotExecutableException(Exception):
     MessageException = "parent stage isn't executable"
 
     def __init__(self):
         super().__init__(self.MessageException)
 
+
 def singleton(class_):
-  instances = {}
-  def getinstance(*args, **kwargs):
-    if class_ not in instances:
-        instances[class_] = class_(*args, **kwargs)
-    return instances[class_]
-  return getinstance
+    instances = {}
+
+    def getinstance(*args, **kwargs):
+        if class_ not in instances:
+            instances[class_] = class_(*args, **kwargs)
+        return instances[class_]
+
+    return getinstance
+
+
+class RootEnvironment(Environment):
+
+    def execute_command(self, cmd) -> Status:
+        pass
+
+    def check(self, requirement) -> Status:
+        pass
+
+    def cleanup(self, paths):
+        pass
 
 @singleton
 class RootStage(Stage):
-
+    def __init__(self):
+        super().__init__()
+        self.meta = Meta(
+            environment=RootEnvironment(),
+            parent=None,
+            tag="root",
+            cleanup_results=[]
+        )
     def get_requirements(self) -> [Requirement]:
         raise RootStageNotExecutableException()
 
